@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shelfmark — interactive prototype</title>
+<style>
+:root{
+  --ground:#0E0E10; --panel:#1C1C20; --raised:#29292E; --line:rgba(255,255,255,.12);
+  --signal:#FF5A1F; --signal-soft:rgba(255,90,31,.18); --ink:#fff; --muted:rgba(255,255,255,.6);
+  --wood:#3B332B;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:#2a2a2e;font-family:var(--sans);color:var(--ink);display:flex;align-items:center;justify-content:center;gap:40px;padding:24px;-webkit-font-smoothing:antialiased}
+.caption{max-width:300px;color:#ddd;font-size:14px;line-height:1.5}
+.caption h1{font:900 34px/1 var(--sans);font-stretch:condensed;letter-spacing:-.5px;margin-bottom:12px}
+.caption h1 span{color:var(--signal)}
+.caption p{margin-bottom:10px;color:#bbb}
+.caption kbd{font-family:var(--mono);font-size:12px;background:#444;padding:1px 5px;border-radius:4px}
+
+/* Phone */
+.phone{width:390px;height:844px;border-radius:54px;background:var(--ground);position:relative;overflow:hidden;
+  box-shadow:0 0 0 11px #111,0 0 0 13px #3a3a3e,0 30px 80px rgba(0,0,0,.6);flex:none}
+.status{height:50px;display:flex;justify-content:space-between;align-items:flex-end;padding:0 32px 6px;font:600 15px var(--sans)}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:122px;height:35px;background:#000;border-radius:20px;z-index:50}
+.screen{position:absolute;top:50px;bottom:84px;left:0;right:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.screen::-webkit-scrollbar{display:none}
+.tabbar{position:absolute;bottom:0;left:0;right:0;height:84px;background:rgba(20,20,22,.92);backdrop-filter:blur(20px);
+  border-top:1px solid var(--line);display:flex;justify-content:space-around;padding-top:8px;z-index:40}
+.tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:#8a8a8e;cursor:pointer;width:80px;font-weight:500}
+.tab svg{width:26px;height:26px}
+.tab.on{color:var(--signal)}
+.navtitle{font:800 34px var(--sans);padding:6px 18px 10px;letter-spacing:-.5px}
+.navbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;height:44px}
+.navbar .t{font:600 17px var(--sans)}
+.link{color:var(--signal);font-size:17px;cursor:pointer;background:none;border:0}
+.pad{padding:0 16px}
+
+.display{font-weight:900;font-stretch:condensed;letter-spacing:-.3px;font-family:"Helvetica Neue Condensed","Arial Narrow",var(--sans)}
+.label{font:700 11px var(--mono);letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)}
+
+.search{display:flex;align-items:center;gap:8px;background:var(--panel);border-radius:12px;padding:10px 12px;margin:0 16px 14px}
+.search input{flex:1;background:none;border:0;color:var(--ink);font-size:16px;outline:none}
+.search svg{width:18px;height:18px;opacity:.6}
+
+.stats{display:flex;gap:10px;margin-bottom:16px}
+.stat{flex:1;background:var(--panel);border-radius:14px;padding:12px 14px}
+.stat b{display:block;font-size:32px;line-height:1.05}
+
+.seg{display:flex;background:var(--panel);border-radius:9px;padding:2px;gap:2px}
+.seg button{flex:1;background:none;border:0;color:var(--ink);font:500 12.5px var(--sans);padding:6px 4px;border-radius:7px;cursor:pointer}
+.seg button.on{background:var(--raised);font-weight:700}
+.iconbtn{width:40px;height:32px;background:var(--raised);border-radius:8px;border:0;color:var(--ink);display:grid;place-items:center;cursor:pointer}
+
+.row{display:flex;align-items:center;gap:13px;background:var(--panel);border-radius:14px;padding:11px 12px;margin-bottom:9px;cursor:pointer;transition:background .15s}
+.row:hover{background:var(--raised)}
+.row .meta{flex:1;min-width:0}
+.row .ti{font-weight:700;font-size:15.5px;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.row .au{font-size:13.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .cn{font:600 11px var(--mono);color:var(--muted);margin-top:4px}
+
+.badge{display:inline-flex;border-radius:5px;overflow:hidden;flex:none}
+.badge span{font:700 13px var(--mono);padding:4px 7px;background:var(--raised)}
+.badge span+span{margin-left:2px}
+.badge span:first-child{background:var(--signal);color:#000}
+.badge.lg span{font-size:21px;padding:7px 12px}
+.badge.lg{border-radius:8px}
+
+/* Spines */
+.sw{border-radius:3px;position:relative;flex:none;box-shadow:1px 0 1px rgba(0,0,0,.45);overflow:hidden}
+.sw::before,.sw::after{content:"";position:absolute;left:0;right:0;height:3px;background:var(--acc);opacity:.85}
+.sw::before{top:12%}.sw::after{bottom:12%}
+.sw .vt{position:absolute;inset:16% 0;writing-mode:vertical-rl;transform:rotate(180deg);display:block;text-align:start;padding-top:4px;
+  font-weight:700;color:var(--acc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1}
+
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;border-radius:12px;border:0;font:700 16px var(--sans);cursor:pointer;background:var(--signal);color:#000;transition:transform .1s}
+.btn:active{transform:scale(.97)}
+.btn.ghost{background:var(--raised);color:var(--ink)}
+.btn svg{width:18px;height:18px}
+
+/* Detail */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}
+.callno{font:700 23px/1.25 var(--mono);color:var(--signal);white-space:pre;margin:10px 0 12px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:14px;align-items:baseline}
+.kv dt{font:700 10px var(--mono);color:var(--muted);letter-spacing:.5px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.tags span{font-size:12px;background:var(--raised);padding:5px 9px;border-radius:20px}
+.dot{display:inline-flex;align-items:center;gap:5px;font:600 11px var(--mono);color:var(--muted)}
+.dot i{width:7px;height:7px;border-radius:50%;background:#34c759}
+
+/* Finder */
+.target{display:flex;align-items:center;gap:12px;background:var(--signal-soft);border:1px solid rgba(255,90,31,.6);border-radius:14px;padding:11px 12px;margin:0 16px 10px;animation:drop .35s ease-out}
+@keyframes drop{from{transform:translateY(-10px);opacity:0}}
+.target .meta{flex:1;min-width:0}
+.target .ti{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.target .ds{font-size:12px;color:var(--muted);margin-top:2px}
+.x{background:none;border:0;color:var(--muted);font-size:14px;cursor:pointer;padding:4px}
+
+.results{display:flex;gap:8px;overflow-x:auto;padding:0 16px 10px;scrollbar-width:none}
+.results::-webkit-scrollbar{display:none}
+.chip{display:flex;align-items:center;gap:8px;background:var(--raised);border-radius:10px;padding:8px;flex:none;max-width:200px;cursor:pointer}
+.chip b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.chip small{font:600 10px var(--mono);color:var(--signal)}
+
+.plan{overflow:auto;scrollbar-width:none;padding:14px 30px 30px 44px;display:flex;gap:26px;align-items:flex-start;height:100%}
+.plan::-webkit-scrollbar{display:none}
+.case{flex:none;transition:opacity .4s,filter .4s}
+.case.dim{opacity:.35;filter:saturate(.2)}
+.case h3{display:flex;align-items:baseline;gap:8px;margin-bottom:48px}
+.case h3 .code{font-size:34px;line-height:1}
+.case.hot h3 .code{color:var(--signal)}
+.case h3 small{font-size:13px;font-weight:700;display:block}
+.case h3 em{font-style:normal;font-size:11.5px;color:var(--muted)}
+.carcass{background:rgba(59,51,43,.55);outline:6px solid var(--wood);padding:8px 8px 0}
+.shelf{position:relative;height:74px;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;margin-bottom:13px}
+.shelf.hot{background:rgba(0,0,0,.25)}
+.shelf::after{content:"";position:absolute;left:-8px;right:-8px;bottom:-5px;height:5px;background:var(--wood)}
+.shelf.hot::after{background:var(--signal)}
+.shelf .num{position:absolute;left:-36px;bottom:24px;font:900 10px var(--mono);background:var(--wood);color:var(--muted);padding:2px 4px}
+.shelf.hot .num{background:var(--signal);color:#000}
+.shelf .empty{position:absolute;inset:0;display:grid;place-items:center;font:500 10px var(--mono);color:var(--muted)}
+.shelf .sw{cursor:pointer;transition:opacity .4s,filter .4s,transform .4s}
+.dimbooks .sw{opacity:.45;filter:saturate(.15)}
+.dimbooks .sw.hit{opacity:1;filter:none;transform:scale(1.12);transform-origin:bottom;z-index:3;box-shadow:0 0 14px rgba(255,90,31,.95),0 0 0 3px var(--signal)}
+.ring{position:absolute;inset:-4px;border:2px solid var(--signal);border-radius:6px;animation:pulse 1.2s ease-out infinite;pointer-events:none}
+@keyframes pulse{from{inset:-4px;opacity:.9}to{inset:-16px;opacity:0}}
+.flag{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;z-index:5;margin-bottom:6px}
+.flag b{font:900 12px var(--mono);background:var(--signal);color:#000;padding:4px 8px;border-radius:5px;white-space:nowrap}
+.flag i{width:2px;height:20px;background:var(--signal)}
+.flag u{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--signal);margin-top:-1px}
+.zoom{position:absolute;right:14px;bottom:96px;background:rgba(40,40,44,.85);backdrop-filter:blur(10px);border-radius:10px;display:flex;flex-direction:column;z-index:30}
+.zoom button{width:40px;height:40px;background:none;border:0;color:#fff;font:700 18px var(--sans);cursor:pointer}
+.zoom button+button{border-top:1px solid var(--line)}
+
+/* Shelf "photograph" */
+.photo{position:relative;height:300px;background:
+  linear-gradient(180deg,#1b140e 0%,#2a1f16 40%,#20180f 100%);flex:none;overflow:hidden}
+.photo .board{position:absolute;left:0;right:0;bottom:0;height:26px;background:linear-gradient(180deg,#8a6a48,#5c432c 40%,#3b2a1b);box-shadow:0 -2px 6px rgba(0,0,0,.6)}
+.bk{position:absolute;bottom:26px;border-radius:2px 2px 0 0;overflow:hidden;
+  box-shadow:inset 3px 0 6px rgba(255,255,255,.12),inset -4px 0 8px rgba(0,0,0,.45),2px 0 3px rgba(0,0,0,.5)}
+.bk .vt{position:absolute;inset:8% 0 14%;writing-mode:vertical-rl;transform:rotate(180deg);display:flex;align-items:center;justify-content:space-between;
+  font-weight:700;white-space:nowrap;overflow:hidden;gap:10px;letter-spacing:.3px}
+.bk .band{position:absolute;left:0;right:0}
+.photo .light{position:absolute;inset:0;background:radial-gradient(ellipse at 40% 0%,rgba(255,240,210,.18),transparent 60%),linear-gradient(90deg,rgba(0,0,0,.35),transparent 15%,transparent 85%,rgba(0,0,0,.4));pointer-events:none}
+.hole{position:absolute;border:3px solid var(--signal);border-radius:4px;box-shadow:0 0 0 3000px rgba(0,0,0,.72);pointer-events:none;transition:all .5s}
+.hole::after{content:"";position:absolute;inset:-4px;border:2px solid var(--signal);border-radius:6px;animation:pulse 1.2s ease-out infinite}
+.box{position:absolute;border:1.2px solid rgba(255,255,255,.85);cursor:pointer}
+.box.sel{border:3px solid var(--signal);background:rgba(255,90,31,.2)}
+.box.off{border:1.2px dashed rgba(255,59,48,.8)}
+.box b{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font:900 9px var(--mono);background:rgba(0,0,0,.75);padding:1px 3px}
+.box.sel b{background:var(--signal);color:#000}
+.hscroll{overflow-x:auto;scrollbar-width:none;border-radius:10px}
+.hscroll::-webkit-scrollbar{display:none}
+
+/* Scan */
+.step{display:flex;align-items:center;gap:10px;margin:22px 0 12px}
+.step i{font:900 14px var(--mono);font-style:normal;width:26px;height:26px;border-radius:50%;background:var(--signal);color:#000;display:grid;place-items:center}
+.step b{font-size:22px}
+.chips{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none}
+.casechip{flex:none;width:118px;padding:12px;border-radius:12px;background:var(--panel);cursor:pointer}
+.casechip b{font-size:28px;display:block;line-height:1}
+.casechip small{font-size:12px}
+.casechip.on{background:var(--signal);color:#000}
+.casechip.new{background:none;border:1.5px dashed var(--line);display:grid;place-items:center;color:var(--muted);font-size:12px}
+.picker{background:rgba(59,51,43,.35);border-radius:10px;padding:10px}
+.prow{display:flex;align-items:center;gap:10px;padding:5px 0 10px;position:relative;cursor:pointer}
+.prow::after{content:"";position:absolute;left:32px;right:0;bottom:3px;height:5px;background:var(--wood)}
+.prow .n{width:22px;font:700 13px var(--mono);color:var(--muted);text-align:center}
+.prow .bay{flex:1;height:54px;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;outline:2px solid transparent;position:relative}
+.prow.on .n{color:var(--signal)}
+.prow.on .bay{background:var(--signal-soft);outline-color:var(--signal)}
+.prow .bay .empty{position:absolute;inset:0;display:grid;place-items:center;font:500 11px var(--mono);color:var(--muted)}
+.tips{background:var(--panel);border-radius:14px;padding:14px;margin:22px 0;font-size:13px;color:var(--muted);line-height:1.45}
+.tips div{margin-top:7px;padding-left:22px;position:relative}
+.tips div::before{content:"›";position:absolute;left:6px;color:var(--signal);font-weight:900}
+
+.viewfinder{position:absolute;inset:0;background:#000;z-index:60;display:flex;flex-direction:column}
+.vf-top{height:100px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 10px;font-size:13px}
+.vf-body{flex:1;display:flex;align-items:center;overflow:hidden;position:relative}
+.vf-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.18) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.18) 1px,transparent 1px);background-size:33.33% 33.33%;pointer-events:none}
+.vf-bot{height:180px;display:flex;align-items:center;justify-content:space-around}
+.shutter{width:76px;height:76px;border-radius:50%;border:5px solid #fff;background:none;cursor:pointer;display:grid;place-items:center}
+.shutter::after{content:"";width:60px;height:60px;border-radius:50%;background:#fff}
+.mode{font:600 13px var(--sans);letter-spacing:1px;color:#ffd60a}
+
+.progress{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:26px;padding:20px}
+.pspines{display:flex;align-items:flex-end;gap:3px;position:relative;height:170px}
+.pspines .sw{transition:opacity .3s}
+.sweep{position:absolute;top:0;bottom:0;width:30px;background:linear-gradient(90deg,transparent,rgba(255,90,31,.9),transparent);mix-blend-mode:screen;animation:sweep 1.9s ease-in-out infinite alternate}
+@keyframes sweep{from{left:-15px}to{left:calc(100% - 15px)}}
+.pbar{display:flex;gap:8px;width:220px}
+.pbar i{flex:1;height:6px;border-radius:3px;background:var(--raised);transition:background .3s}
+.pbar i.on{background:var(--signal)}
+.conf{width:40px;height:4px;border-radius:2px;background:var(--raised);position:relative;overflow:hidden;display:inline-block;vertical-align:middle}
+.conf i{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
+.check{width:24px;height:24px;border-radius:50%;border:2px solid var(--muted);flex:none;cursor:pointer;display:grid;place-items:center}
+.check.on{background:var(--signal);border-color:var(--signal)}
+.check.on::after{content:"";width:6px;height:11px;border:solid #000;border-width:0 2.5px 2.5px 0;transform:rotate(45deg) translate(-1px,-1px)}
+.savebar{position:sticky;bottom:0;padding:12px 16px 14px;background:rgba(14,14,16,.85);backdrop-filter:blur(16px);text-align:center}
+.savebar small{display:block;font-size:11px;color:var(--muted);margin-top:6px}
+.toast{position:absolute;top:60px;left:50%;transform:translateX(-50%);background:var(--signal);color:#000;font-weight:700;padding:10px 16px;border-radius:20px;z-index:70;font-size:14px;white-space:nowrap;animation:drop .3s}
+.wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));gap:4px 4px;background:rgba(59,51,43,.5);border-radius:12px;padding:12px;align-items:end}
+.empty-hero{text-align:center;padding:60px 26px}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <h1>Shelf<span>mark</span></h1>
+  <p>Interactive prototype of the iPhone app, using sample data. Everything is clickable.</p>
+  <p><b>Catalog</b>: search or sort, then tap a book and choose “Show on shelf.”</p>
+  <p><b>Scan</b>: choose a bookcase and a shelf, tap Camera, then the shutter. This runs a simulated recognition pass and opens the review screen.</p>
+  <p><b>Finder</b>: try searching <kbd>jacobs</kbd>, <kbd>koolhaas</kbd> or <kbd>NA2500</kbd>. Switch between Plan and Photo.</p>
+  <p style="font-size:12px;color:#888">Titles, call numbers and colors are illustrative.</p>
+</div>
+
+<div class="phone" id="phone">
+  <div class="island"></div>
+  <div class="status"><span>9:41</span><span>●●●● ▮</span></div>
+  <div class="screen" id="screen"></div>
+  <div class="tabbar" id="tabbar"></div>
+</div>
+
+<script>
+/* ---------------- Sample data ---------------- */
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const pick = a => a[Math.floor(rnd() * a.length)];
+
+const cases = [
+  {code:"A", name:"Study, north wall", room:"Study", shelves:5},
+  {code:"B", name:"Study, window bay", room:"Study", shelves:5},
+  {code:"C", name:"Living room", room:"Living room", shelves:4},
+];
+
+// Featured books: [title, authors, call number, year, publisher, primary, accent, subjects, design]
+const featured = [
+ ["The Death and Life of Great American Cities","Jane Jacobs","HT167 .J3 1961",1961,"Random House","#E9E2CF","#B3261E","City planning — United States|Urban renewal|Cities and towns","cream spine, red sans caps"],
+ ["The Image of the City","Kevin Lynch","NA9108 .L9 1960",1960,"MIT Press","#1F1F1F","#F2F2F2","City planning|Cities and towns — Psychological aspects","black spine, white MIT Press type"],
+ ["Learning from Las Vegas","Robert Venturi, Denise Scott Brown, Steven Izenour","NA735.L3 V46 1977",1977,"MIT Press","#F4D23C","#141414","Architecture — Nevada — Las Vegas|Signs and signboards","yellow spine, black caps"],
+ ["Complexity and Contradiction in Architecture","Robert Venturi","NA2500 .V45 1966",1966,"Museum of Modern Art","#2C2C2C","#E8E0C8","Architecture — Composition, proportion, etc.","charcoal spine, cream serif"],
+ ["A Pattern Language","Christopher Alexander","NA2500 .P3 1977",1977,"Oxford University Press","#6E1E1E","#E6C98A","Architecture — Composition|City planning","oxblood cloth, gold stamping"],
+ ["Delirious New York","Rem Koolhaas","NA735.N5 K66 1978",1978,"Monacelli Press","#E8E8E8","#D7261E","Architecture — New York (N.Y.)|Manhattan (New York, N.Y.)","white spine, red condensed type"],
+ ["S,M,L,XL","Rem Koolhaas, Bruce Mau","NA1153.K66 A4 1995",1995,"Monacelli Press","#C9C3B6","#1A1A1A","Office for Metropolitan Architecture|Architecture, Modern — 20th century","silver-grey, thick block"],
+ ["Collage City","Colin Rowe, Fred Koetter","NA9031 .R68 1978",1978,"MIT Press","#2F4D6B","#F1EDE4","City planning|Architecture — Philosophy","blue spine, white type"],
+ ["The Architecture of the City","Aldo Rossi","NA9031 .R6713 1982",1982,"MIT Press","#B9372A","#FFFFFF","City planning|Architecture — Philosophy","red spine, white type"],
+ ["Towards a New Architecture","Le Corbusier","NA2520 .J413 1986",1986,"Dover","#D9D2C3","#1E1E1E","Architecture|Architecture, Modern","pale grey, black sans"],
+ ["Invisible Cities","Italo Calvino","PQ4809.A45 C513 1974",1974,"Harcourt","#1D3C34","#E9C46A","Cities and towns — Fiction","deep green, gold type"],
+ ["The Power Broker","Robert A. Caro","CT275.M465 C37 1974",1974,"Knopf","#141414","#D4AF37","Moses, Robert, 1888–1981|New York (N.Y.) — Politics","black, gold title"],
+ ["Ways of Seeing","John Berger","N7430.5 .B47 1973",1973,"Penguin","#C8102E","#FFFFFF","Visual perception|Art — Philosophy","Penguin red, white type"],
+ ["The Poetics of Space","Gaston Bachelard","BH301.S7 B313 1994",1994,"Beacon Press","#3D5A80","#F4E9D8","Space (Architecture)|Imagination","slate blue, cream type"],
+ ["Life Between Buildings","Jan Gehl","NA9050 .G4313 2011",2011,"Island Press","#7FB069","#FFFFFF","Public spaces|City planning — Social aspects","green spine, white type"],
+ ["Crabgrass Frontier","Kenneth T. Jackson","HT352.U6 J33 1985",1985,"Oxford University Press","#5B6C3A","#F3EBD3","Suburbs — United States — History","olive spine, cream serif"],
+ ["The Color of Law","Richard Rothstein","HD7288.76.U5 R68 2017",2017,"Liveright","#F2EFE6","#1B1B1B","Discrimination in housing — United States|Segregation","off-white, black caps"],
+ ["Moby-Dick","Herman Melville","PS2384 .M6 2003",2003,"Penguin Classics","#121212","#F58220","Whaling — Fiction|Sea stories","Penguin Classics black, orange band"],
+ ["The Timeless Way of Building","Christopher Alexander","NA2500 .A44 1979",1979,"Oxford University Press","#5A1A1A","#E6C98A","Architecture — Philosophy","oxblood cloth, gold"],
+ ["The Ten Books on Architecture","Vitruvius","NA2515 .V738 1960",1960,"Dover","#ECE4D2","#7A1F1F","Architecture — Early works to 1800","cream, maroon type"],
+ ["Urban Design Since 1945","David Grahame Shane","NA9031 .S53 2011",2011,"Wiley","#E15B26","#FFFFFF","Urban design — History","orange spine, white type"],
+ ["Housing Without Houses","Nicholas Bloom (ed.)","HD7288.78.U5 H68 2008",2008,"University of Pennsylvania Press","#2B2D42","#EDF2F4","Public housing — United States","navy, white type"],
+];
+
+const fillerTitles = ["Notes on Urban Form","The Typology of the House","Measure and Proportion","Streets for People","The Courtyard House","Building the Industrial City","The Making of Place","Townscape","On Adaptive Reuse","Row Houses of Philadelphia","Gardens of Kyoto","The Block and the Street","Civic Art","New England Village Plans","Brick and Timber","The Two-Family House","Waterfronts Reconsidered","Mill Towns of Connecticut","Shelter and Society","Drawing the City","The Grid","Public Housing in America","Urban Heat and Health","Transit and the Neighborhood","The Architecture of Ritual","Concrete Utopias","The Japanese House","Mexico City Modern","Weaving and Structure","Photographing Architecture"];
+const fillerAuthors = ["M. Calder","R. Okafor","S. Lindqvist","A. Moreno","T. Hayashi","E. Whitcombe","J. Park","L. Fontaine","D. Kessler","N. Ruiz","H. Brandt","C. Osei"];
+const fillerClass = ["NA7205","HT167","NA9053","NA2500","HD7293","NA737","TR659","NA1550","HT175","NK8804"];
+const palette = ["#B23A2E","#E8DCC0","#1F3A5F","#2E2E2E","#6B8F71","#C9A227","#5B3A6B","#D9D4C7","#203B2C","#8C2F1B","#E1E1E1","#30475E","#A44A3F","#F2CC8F","#3D405B","#81B29A","#111111","#7D5A50","#DDB892","#264653"];
+
+const books = [];
+let fIdx = 0, uid = 0;
+cases.forEach((c, ci) => {
+  for (let s = 1; s <= c.shelves; s++) {
+    if (ci === 2 && s === 4) continue;                         // one unscanned shelf
+    const n = 11 + Math.floor(rnd() * 7);
+    for (let p = 1; p <= n; p++) {
+      let b;
+      if (fIdx < featured.length && rnd() < 0.3) {
+        const f = featured[fIdx++];
+        b = {title:f[0], authors:f[1], call:f[2], year:f[3], publisher:f[4], color:f[5], accent:f[6], subjects:f[7].split("|"), design:f[8], featured:true};
+      } else {
+        const t = pick(fillerTitles), col = pick(palette);
+        b = {title:t, authors:pick(fillerAuthors), call:`${pick(fillerClass)} .${String.fromCharCode(65+Math.floor(rnd()*26))}${Math.floor(rnd()*90+10)} ${1950+Math.floor(rnd()*72)}`,
+             year:1950+Math.floor(rnd()*72), publisher:pick(["Yale University Press","MIT Press","Princeton Architectural Press","Rizzoli","Phaidon","Island Press"]),
+             color:col, accent: lum(col) > .6 ? pick(["#1A1A1A","#7A1F1F","#1F3A5F"]) : pick(["#FFFFFF","#E6C98A","#F2E8D5"]), subjects:["Architecture"], design:""};
+      }
+      b.id = uid++; b.case = c.code; b.shelf = s; b.pos = p;
+      b.w = 14 + Math.floor(rnd() * 16) + (b.title.length > 30 ? 6 : 0);
+      b.h = 0.66 + rnd() * 0.32;
+      b.conf = 0.55 + rnd() * 0.45;
+      books.push(b);
+    }
+  }
+});
+// Make sure every featured book lands somewhere.
+while (fIdx < featured.length) {
+  const f = featured[fIdx++], host = books.filter(b => !b.featured)[Math.floor(rnd()*books.length*0.8)];
+  if (!host) break;
+  Object.assign(host, {title:f[0], authors:f[1], call:f[2], year:f[3], publisher:f[4], color:f[5], accent:f[6], subjects:f[7].split("|"), design:f[8], featured:true});
+}
+
+function lum(hex){const v=parseInt(hex.slice(1),16);return (0.299*(v>>16&255)+0.587*(v>>8&255)+0.114*(v&255))/255}
+const addr = b => `${b.case}-${b.shelf}-${String(b.pos).padStart(2,"0")}`;
+const caseOf = code => cases.find(c => c.code === code);
+const describe = b => `${caseOf(b.case).name}, shelf ${b.shelf} from the top, book ${b.pos} from the left`;
+function lcKey(c){const m=c.toUpperCase().match(/^([A-Z]+)\s*([\d.]*)(.*)$/);if(!m)return"~";return m[1].padEnd(3)+String(parseFloat(m[2]||0).toFixed(4)).padStart(10,"0")+m[3].replace(/\s/g,"")}
+
+/* ---------------- State ---------------- */
+const S = {tab:"catalog", query:"", sort:"call", layout:"list", detail:null, target:null, fquery:"", fmode:"plan", zoom:1,
+           scanCase:"A", scanShelf:3, scanStage:null, review:null, sel:null};
+
+/* ---------------- Helpers ---------------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const badge = (a, lg) => `<span class="badge${lg?" lg":""}">${a.split("-").map(p=>`<span>${p}</span>`).join("")}</span>`;
+function spine(b, w, h, title=false, extra=""){
+  const fs = Math.min(w*0.42, 12);
+  return `<div class="sw ${extra}" data-id="${b.id??""}" style="width:${w}px;height:${h}px;background:linear-gradient(90deg,${b.color},${shade(b.color,-14)});--acc:${b.accent}">${title&&w>=18?`<span class="vt" style="font-size:${fs}px">${esc(b.title)}</span>`:""}</div>`;
+}
+function shade(hex, amt){const v=parseInt(hex.slice(1),16);const f=x=>Math.max(0,Math.min(255,x+amt));return "#"+[f(v>>16&255),f(v>>8&255),f(v&255)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+const icons = {
+  catalog:'<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="4" width="4" height="16" rx="1"/><rect x="8.5" y="2" width="4" height="18" rx="1"/><rect x="14" y="5" width="3.5" height="15" rx="1" transform="rotate(-12 16 12)"/><rect x="2" y="20.5" width="20" height="1.5" rx=".7"/></svg>',
+  scan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3.5"/></svg>',
+  finder:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>',
+  settings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  scope:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>',
+  cam:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 4 7.5 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.5L15 4H9zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"/></svg>',
+  lib:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="15" height="13" rx="2"/><path d="M7 21h12a2 2 0 0 0 2-2V8"/><path d="m3 15 4-4 4 4 3-3 4 4"/></svg>',
+};
+
+/* ---------------- Render ---------------- */
+function render(){
+  $("#tabbar").innerHTML = [["catalog","Catalog"],["scan","Scan"],["finder","Finder"],["settings","Settings"]]
+    .map(([k,l])=>`<div class="tab ${S.tab===k?"on":""}" data-tab="${k}">${icons[k]}<span>${l}</span></div>`).join("");
+  const scr = $("#screen");
+  scr.style.overflowY = S.tab==="finder" ? "hidden" : "auto";
+  scr.innerHTML = S.tab==="catalog" ? (S.detail!=null ? detailView() : catalogView())
+                : S.tab==="scan" ? scanView()
+                : S.tab==="finder" ? finderView() : settingsView();
+  if (S.tab==="finder") afterFinder();
+  if (S.tab==="scan" && S.review) afterReview();
+}
+
+function catalogView(){
+  const terms = S.query.toLowerCase().split(/\s+/).filter(Boolean);
+  let list = books.filter(b => terms.every(t => [b.title,b.authors,b.call,b.subjects.join(" "),addr(b),b.publisher].join(" ").toLowerCase().includes(t)));
+  const sorts = {call:(a,b)=>lcKey(a.call)<lcKey(b.call)?-1:1, title:(a,b)=>a.title.localeCompare(b.title), author:(a,b)=>a.authors.localeCompare(b.authors),
+    loc:(a,b)=>addr(a).localeCompare(addr(b)), recent:(a,b)=>b.id-a.id};
+  list.sort(sorts[S.sort]);
+  const matched = Math.round(books.filter(b=>b.conf>0.62).length / books.length * 100);
+  return `
+  <div class="navtitle">Catalog</div>
+  <div class="search">${icons.search}<input id="q" placeholder="Title, author, subject, call number…" value="${esc(S.query)}"></div>
+  <div class="pad">
+    <div class="stats">
+      <div class="stat"><b class="display">${books.length}</b><span class="label">books</span></div>
+      <div class="stat"><b class="display">${cases.length}</b><span class="label">cases</span></div>
+      <div class="stat"><b class="display">${matched}%</b><span class="label">LC matched</span></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <div class="seg" style="flex:1">${[["call","Call no."],["title","Title"],["author","Author"],["loc","Location"]].map(([k,l])=>`<button data-sort="${k}" class="${S.sort===k?"on":""}">${l}</button>`).join("")}</div>
+      <button class="iconbtn" data-layout>${S.layout==="list"?"▥":"☰"}</button>
+    </div>
+    ${S.layout==="list" ? list.slice(0,80).map(b=>`
+      <div class="row" data-open="${b.id}">
+        ${spine(b,18,64)}
+        <div class="meta"><div class="ti">${esc(b.title)}</div><div class="au">${esc(b.authors)}</div><div class="cn">${esc(b.call)}</div></div>
+        ${badge(addr(b))}
+      </div>`).join("")
+      : `<div class="wall">${list.map(b=>`<div data-find="${b.id}" style="cursor:pointer">${spine(b,32,90+b.h*70,true)}</div>`).join("")}</div>`}
+    ${list.length===0?`<p class="muted" style="text-align:center;padding:40px 0">No books match “${esc(S.query)}”.</p>`:""}
+    <div style="height:20px"></div>
+  </div>`;
+}
+
+function detailView(){
+  const b = books.find(x=>x.id===S.detail);
+  return `
+  <div class="navbar"><button class="link" data-back>‹ Catalog</button><span></span><button class="link">Edit</button></div>
+  <div class="pad">
+    <div style="display:flex;gap:18px;align-items:flex-start;margin:6px 0 20px">
+      ${spine(b,46,190,true)}
+      <div style="flex:1">
+        <div class="display" style="font-size:30px;line-height:1.05">${esc(b.title)}</div>
+        <div class="muted" style="font-size:18px;margin:8px 0 16px">${esc(b.authors)}</div>
+        ${badge(addr(b),true)}
+        <div class="muted" style="font-size:12.5px;margin-top:8px;line-height:1.35">${esc(describe(b))}</div>
+      </div>
+    </div>
+    <button class="btn" data-find="${b.id}">${icons.scope} Show on shelf</button>
+    <div style="margin:22px 0 8px" class="label">As photographed</div>
+    <div class="card" style="padding:8px;display:flex;justify-content:center;overflow:hidden">
+      <div style="position:relative;width:220px;height:56px;margin:14px 0"><div style="position:absolute;left:82px;top:-82px;width:56px;height:220px;transform:rotate(90deg)">${photoBook(b, 56, 220).replace('class="bk" style="','class="bk" style="bottom:0;')}</div></div>
+    </div>
+    <div class="card" style="margin-top:22px">
+      <div style="display:flex;justify-content:space-between"><span class="label">Library of Congress</span><span class="dot"><i></i>LC record</span></div>
+      <div class="callno">${esc(b.call.replace(/ \./," \n.").replace(/ (\d{4})$/,"\n$1"))}</div>
+      <div style="height:1px;background:var(--line);margin-bottom:12px"></div>
+      <dl class="kv"><dt>PUBLISHER</dt><dd>${esc(b.publisher)}</dd><dt>DATE</dt><dd>${b.year}</dd><dt>SOURCE</dt><dd>Open Library + Library of Congress</dd></dl>
+      <div class="label" style="margin-top:14px">Subjects</div>
+      <div class="tags">${b.subjects.map(s=>`<span>${esc(s)}</span>`).join("")}</div>
+    </div>
+    ${b.design?`<div style="margin:22px 0 30px"><div class="label">Read from the spine</div><p style="margin-top:8px;font-style:italic">“${esc(b.title.toUpperCase())} · ${esc(b.authors.split(",")[0].toUpperCase())}”</p><p class="muted" style="font-size:14px;margin-top:4px">${esc(b.design)}</p><p class="mono muted" style="font-size:11px;margin-top:6px">Identification confidence ${Math.round(b.conf*100)}%</p></div>`:'<div style="height:30px"></div>'}
+  </div>`;
+}
+
+/* Realistic single book for "photo" renderings */
+function photoBook(b, w, h, left=0){
+  const fs = Math.max(8, Math.min(w*0.36, 15));
+  const serif = /serif|cloth|gold/.test(b.design) ? "Georgia, serif" : "Helvetica Neue, Arial, sans-serif";
+  const band = /band/.test(b.design) ? `<div class="band" style="top:6%;height:9%;background:${b.accent}"></div>` : "";
+  const au = b.authors.split(",")[0].split(" ").pop();
+  return `<div class="bk" style="left:${left}px;width:${w}px;height:${h}px;background:linear-gradient(90deg,${shade(b.color,18)},${b.color} 30%,${shade(b.color,-22)})">${band}
+    <div class="vt" style="font-size:${fs}px;color:${b.accent};font-family:${serif}"><span>${esc(b.title.length>34?b.title.slice(0,32)+"…":b.title)}</span><span style="font-size:${fs*0.8}px;opacity:.85">${esc(au)}</span></div></div>`;
+}
+function shelfPhoto(list, height=300){
+  let x = 14; const scale = height/300; const items = [];
+  const html = list.map(b => { const w = Math.round((b.w*1.45+8)*scale), h = Math.round((150 + b.h*110)*scale); const s = photoBook(b,w,h,x); items.push({b,x,w,h}); x += w + 1; return s; }).join("");
+  return {html:`<div class="photo" style="width:${x+14}px;height:${height}px">${html}<div class="board"></div><div class="light"></div></div>`, items, width:x+14};
+}
+
+/* ---------------- Finder ---------------- */
+function finderView(){
+  const t = S.target!=null ? books.find(b=>b.id===S.target) : null;
+  const terms = S.fquery.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = terms.length ? books.filter(b => terms.every(q => [b.title,b.authors,b.call,b.subjects.join(" "),addr(b)].join(" ").toLowerCase().includes(q))).slice(0,25) : [];
+  return `
+  <div style="display:flex;flex-direction:column;height:100%">
+    <div class="navbar" style="justify-content:center"><span class="t">Finder</span></div>
+    <div class="search" style="margin-bottom:10px">${icons.search}<input id="fq" placeholder="Find a book…" value="${esc(S.fquery)}"></div>
+    ${matches.length?`<div class="results">${matches.map(b=>`<div class="chip" data-pick="${b.id}">${spine(b,8,34)}<div><b>${esc(b.title)}</b><small>${addr(b)}</small></div></div>`).join("")}</div>`:""}
+    ${t?`<div class="target">${spine(t,14,54)}<div class="meta"><div class="ti">${esc(t.title)}</div><div class="ds">${esc(describe(t))}</div></div>${badge(addr(t))}<button class="x" data-clear>✕</button></div>`:""}
+    <div class="pad" style="margin-bottom:6px"><div class="seg">${[["plan","Plan"],["photo","Photo"]].map(([k,l])=>`<button data-fmode="${k}" class="${S.fmode===k?"on":""}">${l}</button>`).join("")}</div></div>
+    <div style="flex:1;position:relative;min-height:0">${S.fmode==="plan" ? planView(t) : photoFinder(t)}</div>
+  </div>
+  ${S.fmode==="plan"?`<div class="zoom"><button data-zoom="1.25">+</button><button data-zoom="0.8">−</button></div>`:""}`;
+}
+
+function planView(t){
+  const z = S.zoom, shelfH = 74*z, caseW = 260*z;
+  return `<div class="plan" id="plan" style="gap:${26*z}px">${cases.map(c=>{
+    const shelfBooks = s => books.filter(b=>b.case===c.code&&b.shelf===s).sort((a,b)=>a.pos-b.pos);
+    const fullest = Math.max(...Array.from({length:c.shelves},(_,i)=>shelfBooks(i+1).reduce((a,b)=>a+b.w,0)),1);
+    const k = (caseW-4)/fullest;
+    const hot = t && t.case===c.code, dim = t && !hot;
+    return `<div class="case ${hot?"hot":""} ${dim?"dim":""}" id="case-${c.code}">
+      <h3><span class="code display" style="font-size:${34*Math.min(z,1.4)}px">${c.code}</span><div><small>${esc(c.name)}</small><em>${esc(c.room)}</em></div></h3>
+      <div class="carcass ${t?"dimbooks":""}" style="width:${caseW+16}px;outline-width:${6*z}px">
+      ${Array.from({length:c.shelves},(_,i)=>{const s=i+1, list=shelfBooks(s), isHot=t&&hot&&t.shelf===s;
+        return `<div class="shelf ${isHot?"hot":""}" style="height:${shelfH}px;margin-bottom:${13*z}px">
+          <span class="num">${s}</span>
+          ${list.length?"":`<div class="empty">shelf ${s} · not scanned</div>`}
+          ${list.map(b=>{const hit=t&&b.id===t.id; const w=Math.max(b.w*k,2), h=shelfH*(0.62+0.36*b.h);
+            return `<div style="position:relative;display:flex;align-items:flex-end;${hit?"z-index:4":""}">${spine(b,w,h,z>1.5,hit?"hit":"")}${hit?`<div class="ring"></div><div class="flag" style="bottom:${h+6}px"><b>${addr(b)}</b><i></i><u></u></div>`:""}</div>`}).join("")}
+        </div>`}).join("")}
+      </div></div>`}).join("")}</div>`;
+}
+
+function photoFinder(t){
+  if (!t) return `<div class="empty-hero"><div class="display" style="font-size:24px">Search for a book</div><p class="muted" style="margin-top:8px">Find a book above to see it in its shelf photograph.</p></div>`;
+  const list = books.filter(b=>b.case===t.case&&b.shelf===t.shelf).sort((a,b)=>a.pos-b.pos);
+  const ph = shelfPhoto(list, 330); const it = ph.items.find(i=>i.b.id===t.id);
+  return `<div class="hscroll" id="photoScroll" style="margin:6px 0 0"><div style="position:relative;width:${ph.width}px">${ph.html}
+      <div class="hole" style="left:${it.x-4}px;width:${it.w+8}px;bottom:${26-4}px;height:${it.h+8}px"></div></div></div>
+    <div style="text-align:center;padding:18px 20px">${badge(addr(t),true)}<p class="muted" style="font-size:13px;margin-top:10px">${esc(describe(t))}</p>
+    <p class="mono muted" style="font-size:10px;margin-top:6px">Photographed 12 Nov 2026 · photo 1 of 1 for shelf ${t.case}-${t.shelf}</p></div>`;
+}
+
+function afterFinder(){
+  const t = S.target!=null ? books.find(b=>b.id===S.target) : null;
+  if (!t) return;
+  requestAnimationFrame(()=>{
+    if (S.fmode==="plan"){
+      const plan=$("#plan"), el=$("#case-"+t.case), hit=plan.querySelector(".sw.hit");
+      if (plan&&el) plan.scrollTo({left: el.offsetLeft - (plan.clientWidth-el.offsetWidth)/2, behavior:"smooth"});
+    } else {
+      const sc=$("#photoScroll"), hole=sc&&sc.querySelector(".hole");
+      if (hole) sc.scrollTo({left: hole.offsetLeft - sc.clientWidth/2 + hole.offsetWidth/2, behavior:"smooth"});
+    }
+  });
+}
+
+/* ---------------- Scan ---------------- */
+const newShelfBooks = (()=>{ const s=seed; seed=99; const arr=[featured[0],featured[17],featured[4],featured[12],featured[7],featured[2],featured[10],featured[13]].map((f,i)=>({id:"n"+i,title:f[0],authors:f[1],call:f[2],color:f[5],accent:f[6],design:f[8],w:14+Math.floor(rnd()*16),h:.66+rnd()*.32,conf:[.97,.99,.93,.88,.91,.96,.74,.52][i],include:true}));
+  arr.splice(5,0,{id:"nx",title:"",authors:"",call:"",color:"#7D5A50",accent:"#DDB892",design:"",w:12,h:.7,conf:.18,include:true}); seed=s; return arr; })();
+
+function scanView(){
+  if (S.review) return reviewView();
+  if (S.scanStage) return progressView();
+  const c = caseOf(S.scanCase);
+  return `
+  <div class="navtitle">Scan</div>
+  <div class="pad">
+    <div class="step"><i>1</i><b class="display">Choose a bookcase</b></div>
+    <div class="chips">${cases.map(x=>`<div class="casechip ${x.code===S.scanCase?"on":""}" data-case="${x.code}"><b class="display">${x.code}</b><small>${esc(x.name)}</small></div>`).join("")}<div class="casechip new">＋<br>New case</div></div>
+    <div class="step"><i>2</i><b class="display">Tap the shelf you're scanning</b></div>
+    <div class="picker">${Array.from({length:c.shelves},(_,i)=>{const s=i+1, list=books.filter(b=>b.case===c.code&&b.shelf===s).sort((a,b)=>a.pos-b.pos); const tot=list.reduce((a,b)=>a+b.w,0)||1;
+      return `<div class="prow ${s===S.scanShelf?"on":""}" data-shelf="${s}"><span class="n">${s}</span><div class="bay">${list.length?list.map(b=>`<div style="width:${b.w/tot*100}%;height:${72+b.h*28}%;background:${b.color};border-right:.5px solid rgba(0,0,0,.3)"></div>`).join(""):'<div class="empty">not scanned</div>'}</div></div>`}).join("")}</div>
+    <div class="step"><i>3</i><b class="display">Capture shelf ${c.code}-${S.scanShelf}</b></div>
+    <div class="seg" style="margin-bottom:8px"><button class="on">Replace shelf</button><button>Add to right end</button></div>
+    <p class="muted" style="font-size:12.5px;margin-bottom:12px">A new scan replaces the books currently cataloged on this shelf.</p>
+    <div style="display:flex;gap:12px"><button class="btn" data-camera>${icons.cam} Camera</button><button class="btn ghost">${icons.lib} Library</button></div>
+    <div class="tips"><span class="label">For best results</span>
+      <div>Stand square to the shelf; fill the frame with one shelf.</div>
+      <div>For long shelves, record a slow, level video pan from left to right, or take several photos and choose “Add to right end.”</div>
+      <div>Even, bright light. Avoid glare on glossy jackets.</div></div>
+  </div>`;
+}
+
+function openCamera(){
+  const ph = shelfPhoto(newShelfBooks, 300);
+  const vf = document.createElement("div"); vf.className="viewfinder"; vf.id="vf";
+  vf.innerHTML = `<div class="vf-top"><span data-vfclose style="cursor:pointer">Cancel</span><span class="mono" style="color:#ffd60a">SHELF ${S.scanCase}-${S.scanShelf}</span><span>⚡︎</span></div>
+    <div class="vf-body"><div style="transform:scale(${390/ph.width*1.04});transform-origin:left center">${ph.html}</div><div class="vf-grid"></div></div>
+    <div class="vf-bot"><span class="mode">VIDEO</span><button class="shutter" data-shutter></button><span class="mode" style="color:#fff">PHOTO</span></div>`;
+  $("#phone").appendChild(vf);
+}
+
+function progressView(){
+  const stages = ["Reading spines","Identifying books","Finding LC records"];
+  const details = ["On-device OCR · 2 sections of the shelf","Identified 6 spines so far","Cataloged 7 of 8"];
+  const i = S.scanStage-1;
+  const pal = ["#B23A2E","#E8DCC0","#1F3A5F","#2E2E2E","#6B8F71","#C9A227","#5B3A6B","#D9D4C7","#203B2C","#8C2F1B","#E1E1E1","#30475E"];
+  return `<div class="navbar"><span class="link" data-cancelscan>Cancel</span><span class="t">Shelf ${S.scanCase}-${S.scanShelf}</span><span style="width:50px"></span></div>
+  <div class="progress" style="height:calc(100% - 44px)">
+    <div class="pspines">${pal.map((c,k)=>spine({color:c,accent:"#fff"},16+(k%4)*4,110+(k*29)%50,false,"").replace('style="','style="opacity:'+((k/pal.length)<=(S.scanStage/3)?1:.25)+';')).join("")}<div class="sweep"></div></div>
+    <div style="text-align:center"><div class="display" style="font-size:30px">${stages[i]}</div><p class="muted" style="margin-top:6px">${details[i]}</p></div>
+    <div class="pbar">${[1,2,3].map(k=>`<i class="${S.scanStage>=k?"on":""}"></i>`).join("")}</div>
+    <p class="muted" style="font-size:11px;text-align:center;max-width:280px;margin-top:40px">Spines are read on-device and by Claude; catalog records come from the Library of Congress and Open Library.</p>
+  </div>`;
+}
+
+function reviewView(){
+  const ph = shelfPhoto(newShelfBooks, 260);
+  const inc = newShelfBooks.filter(b=>b.include).length;
+  return `<div class="navbar"><span class="link" data-cancelscan>Cancel</span><span class="t">Shelf ${S.scanCase}-${S.scanShelf}</span><span style="width:50px"></span></div>
+  <div class="pad">
+    <div class="hscroll"><div style="position:relative;width:${ph.width}px">${ph.html}
+      ${ph.items.map((it,k)=>`<div class="box ${S.sel===it.b.id?"sel":""} ${it.b.include?"":"off"}" data-sel="${it.b.id}" style="left:${it.x}px;width:${it.w}px;bottom:26px;height:${it.h}px"><b>${k+1}</b></div>`).join("")}
+    </div></div>
+    <div style="display:flex;justify-content:space-between;margin:18px 0 10px"><span class="label">${newShelfBooks.length} spines found · left to right</span><span class="mono muted" style="font-size:10px">tap to edit</span></div>
+    ${newShelfBooks.map((b,k)=>`<div class="row" data-sel="${b.id}" style="${S.sel===b.id?"background:var(--raised);":""}${b.include?"":"opacity:.5"}">
+      <span class="mono muted" style="width:20px;font-size:12px;font-weight:700">${k+1}</span>${spine(b,14,50)}
+      <div class="meta"><div class="ti" style="font-size:15px;${b.title?"":"color:var(--muted)"}">${b.title?esc(b.title):"Unidentified spine"}</div>
+        ${b.authors?`<div class="au" style="font-size:12px">${esc(b.authors)}</div>`:""}
+        <div style="display:flex;gap:6px;align-items:center;margin-top:3px"><span class="mono" style="font-size:10px;color:${b.call?"var(--signal)":"var(--muted)"}">${b.call?esc(b.call):"unreadable"}</span>
+        <span class="conf"><i style="width:${Math.max(5,b.conf*100)}%;background:${b.conf>.75?"#34c759":b.conf>.45?"#ffcc00":"#ff3b30"}"></i></span></div></div>
+      <div class="check ${b.include?"on":""}" data-toggle="${b.id}"></div></div>`).join("")}
+  </div>
+  <div class="savebar"><button class="btn" data-save>Save ${inc} books to ${S.scanCase}-${S.scanShelf}</button><small>Replaces anything previously cataloged on this shelf.</small></div>`;
+}
+function afterReview(){}
+
+function settingsView(){
+  return `<div class="navtitle">Settings</div><div class="pad">
+    <div class="label" style="margin:6px 4px 8px">Bookcases</div>
+    <div class="card" style="padding:4px 14px">${cases.map((c,i)=>`<div style="display:flex;align-items:center;gap:12px;padding:11px 0;${i?"border-top:1px solid var(--line)":""}"><b class="display" style="font-size:24px;color:var(--signal);width:34px">${c.code}</b><div><div>${esc(c.name)}</div><div class="muted" style="font-size:12px">${c.shelves} shelves · ${books.filter(b=>b.case===c.code).length} books · ${esc(c.room)}</div></div></div>`).join("")}
+      <div style="border-top:1px solid var(--line);padding:11px 0;color:var(--signal)">＋ Add bookcase</div></div>
+    <div class="label" style="margin:22px 4px 8px">Spine recognition (Claude)</div>
+    <div class="card" style="padding:4px 14px;font-size:15px">
+      <div style="padding:11px 0;display:flex;justify-content:space-between"><span>API key</span><span class="muted">••••••••••••</span></div>
+      <div style="padding:11px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between"><span>Model</span><span class="mono muted" style="font-size:13px">claude-opus-5-5</span></div>
+      <div style="padding:11px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between"><span>Effort</span><span class="muted">High (most accurate)</span></div></div>
+    <div class="label" style="margin:22px 4px 8px">Catalog</div>
+    <div class="card" style="padding:4px 14px;font-size:15px;color:var(--signal)">
+      <div style="padding:11px 0">Retry LC lookup for unmatched books</div>
+      <div style="padding:11px 0;border-top:1px solid var(--line)">Export catalog (CSV)</div></div>
+    <p class="muted" style="font-size:12px;margin:18px 4px 30px;line-height:1.45">Addresses read bookcase, shelf counted from the top, then position counted from the left. B-3-07 is the seventh book on the third shelf of bookcase B.</p>
+  </div>`;
+}
+
+/* ---------------- Events ---------------- */
+function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;$("#phone").appendChild(t);setTimeout(()=>t.remove(),2200)}
+function find(id){S.target=id;S.tab="finder";S.fquery="";render()}
+
+document.addEventListener("click", e => {
+  const d = k => e.target.closest(`[data-${k}]`);
+  let el;
+  if (el=d("tab")) { S.tab=el.dataset.tab; if(S.tab!=="catalog") S.detail=null; render(); return; }
+  if (el=d("sort")) { S.sort=el.dataset.sort; render(); return; }
+  if (d("layout")) { S.layout=S.layout==="list"?"spines":"list"; render(); return; }
+  if (el=d("open")) { S.detail=+el.dataset.open; render(); $("#screen").scrollTop=0; return; }
+  if (d("back")) { S.detail=null; render(); return; }
+  if (el=d("find")) { find(+el.dataset.find); return; }
+  if (el=d("pick")) { find(+el.dataset.pick); return; }
+  if (d("clear")) { S.target=null; render(); return; }
+  if (el=d("fmode")) { S.fmode=el.dataset.fmode; render(); return; }
+  if (el=d("zoom")) { S.zoom=Math.min(2.4,Math.max(.6,S.zoom*+el.dataset.zoom)); render(); return; }
+  if (el=d("case")) { S.scanCase=el.dataset.case; S.scanShelf=1; render(); return; }
+  if (el=d("shelf")) { S.scanShelf=+el.dataset.shelf; render(); return; }
+  if (d("camera")) { openCamera(); return; }
+  if (d("vfclose")) { $("#vf").remove(); return; }
+  if (d("shutter")) { $("#vf").remove(); runScan(); return; }
+  if (d("cancelscan")) { S.scanStage=null; S.review=null; render(); return; }
+  if (el=d("toggle")) { const b=newShelfBooks.find(x=>x.id===el.dataset.toggle); b.include=!b.include; e.stopPropagation(); render(); return; }
+  if (el=d("sel")) { S.sel=el.dataset.sel; const y=$("#screen").scrollTop; render(); $("#screen").scrollTop=y; return; }
+  if (d("save")) { const n=newShelfBooks.filter(b=>b.include).length; S.review=null; S.scanStage=null; S.tab="catalog"; render(); toast(`${n} books saved to shelf ${S.scanCase}-${S.scanShelf}`); return; }
+  // Tapping a spine in the plan opens its record.
+  if (S.tab==="finder" && (el=e.target.closest(".shelf .sw"))) { S.detail=+el.dataset.id; S.tab="catalog"; render(); return; }
+});
+document.addEventListener("input", e => {
+  if (e.target.id==="q") { S.query=e.target.value; const p=e.target.selectionStart; render(); const q=$("#q"); q.focus(); q.setSelectionRange(p,p); }
+  if (e.target.id==="fq") { S.fquery=e.target.value; const p=e.target.selectionStart; render(); const q=$("#fq"); q.focus(); q.setSelectionRange(p,p); }
+});
+document.addEventListener("keydown", e => {
+  if (e.key==="Enter" && e.target.id==="fq") { const c=document.querySelector("[data-pick]"); if(c) find(+c.dataset.pick); }
+});
+function runScan(){ S.review=null; S.scanStage=1; render(); setTimeout(()=>{S.scanStage=2;render()},1400); setTimeout(()=>{S.scanStage=3;render()},2900); setTimeout(()=>{S.scanStage=null;S.review=true;S.sel=null;render()},4300); }
+
+// Deep links for screenshots: #finder=jacobs, #photo=jacobs, #detail=jacobs, #scan, #review, #progress
+function boot(){
+  const h = decodeURIComponent(location.hash.slice(1)); const [k,v] = h.split("=");
+  const byTitle = s => books.find(b=>b.title.toLowerCase().includes(s));
+  if (k==="finder"||k==="photo") { const b=byTitle(v); S.tab="finder"; S.fmode=k==="photo"?"photo":"plan"; S.target=b?b.id:null; }
+  if (k==="finderzoom") { const b=byTitle(v); S.tab="finder"; S.zoom=1.6; S.target=b?b.id:null; }
+  if (k==="detail") { const b=byTitle(v); S.detail=b.id; }
+  if (k==="search") { S.query=v; }
+  if (k==="wall") { S.layout="spines"; }
+  if (k==="scan") S.tab="scan";
+  if (k==="progress") { S.tab="scan"; S.scanStage=+(v||2); }
+  if (k==="review") { S.tab="scan"; S.review=true; S.sel="n2"; }
+  if (k==="camera") { S.tab="scan"; render(); openCamera(); return; }
+  render();
+}
+boot();
+</script>
+</body>
+</html>
