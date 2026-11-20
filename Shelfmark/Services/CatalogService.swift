@@ -1,7 +1,7 @@
 import Foundation
 
 /// A bibliographic record assembled from the Library of Congress and Open Library.
-struct CatalogRecord {
+struct CatalogRecord: Sendable {
     var title: String = ""
     var authors: [String] = []
     var publisher: String = ""

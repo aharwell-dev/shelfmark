@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 /// One spine as read by the vision model, in the coordinate space of the image it was given.
-struct SpineReading: Codable, Hashable {
+struct SpineReading: Codable, Hashable, Sendable {
     var title: String
     var authors: [String]
     var spineText: String

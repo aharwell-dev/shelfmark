@@ -136,12 +136,16 @@ final class ScanPipeline {
             }
             // At most three tiles in flight to stay polite with rate limits.
             while next < min(3, tiles.count) { addTile(next); next += 1 }
-            stage = .identifying
+            await MainActor.run { self.stage = .identifying }
             for try await batch in group {
                 found.append(contentsOf: batch)
                 completed += 1
-                progress = Double(completed) / Double(tiles.count)
-                detail = "Identified \(found.count) spines so far"
+                // The task-group body isn't main-actor isolated, so hop to the main actor for UI state.
+                let fraction = Double(completed) / Double(tiles.count), count = found.count
+                await MainActor.run {
+                    self.progress = fraction
+                    self.detail = "Identified \(count) spines so far"
+                }
                 if next < tiles.count { addTile(next); next += 1 }
             }
         }
@@ -185,23 +189,32 @@ final class ScanPipeline {
         let work = segments.enumerated().flatMap { s, seg in seg.books.indices.map { (s, $0) } }
             .filter { !segments[$0.0].books[$0.1].reading.title.isEmpty }
         guard !work.isEmpty else { return }
-        var done = 0
+        // Read everything the background tasks need up front, while still on the main actor.
+        let jobs: [(segment: Int, book: Int, reading: SpineReading)] =
+            work.map { ($0.0, $0.1, segments[$0.0].books[$0.1].reading) }
+        let total = jobs.count
         let catalog = self.catalog
 
         await withTaskGroup(of: (Int, Int, CatalogRecord?).self) { group in
             var next = 0
+            var done = 0
             func add(_ i: Int) {
-                let (s, b) = work[i]
-                let r = segments[s].books[b].reading
-                group.addTask { (s, b, await catalog.lookup(title: r.title, authors: r.authors, publisherHint: r.publisher)) }
+                let job = jobs[i]
+                let r = job.reading
+                group.addTask {
+                    (job.segment, job.book, await catalog.lookup(title: r.title, authors: r.authors, publisherHint: r.publisher))
+                }
             }
-            while next < min(4, work.count) { add(next); next += 1 }
+            while next < min(4, total) { add(next); next += 1 }
             for await (s, b, record) in group {
-                segments[s].books[b].catalog = record
                 done += 1
-                progress = Double(done) / Double(work.count)
-                detail = "Cataloged \(done) of \(work.count)"
-                if next < work.count { add(next); next += 1 }
+                let finished = done
+                await MainActor.run {
+                    self.segments[s].books[b].catalog = record
+                    self.progress = Double(finished) / Double(total)
+                    self.detail = "Cataloged \(finished) of \(total)"
+                }
+                if next < total { add(next); next += 1 }
             }
         }
     }
