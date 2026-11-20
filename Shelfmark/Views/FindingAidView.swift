@@ -18,7 +18,10 @@ struct FindingAidView: View {
     enum Mode: String, CaseIterable, Identifiable { case plan = "Plan", photo = "Photo"; var id: String { rawValue } }
 
     private var target: Book? { router.highlighted }
-    private var effectiveZoom: CGFloat { min(max(zoom * pinch, 0.5), 3) }
+    private let minZoom: CGFloat = 0.3
+    private let maxZoom: CGFloat = 6
+    private var effectiveZoom: CGFloat { clampZoom(zoom * pinch) }
+    private func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, minZoom), maxZoom) }
 
     private var matches: [Book] {
         let terms = query.split(separator: " ").map(String.init)
@@ -112,24 +115,41 @@ struct FindingAidView: View {
     // MARK: Plan (elevation)
 
     private var planView: some View {
-        ScrollViewReader { proxy in
-            ScrollView([.horizontal, .vertical], showsIndicators: false) {
-                HStack(alignment: .bottom, spacing: 26 * effectiveZoom) {
-                    ForEach(bookcases) { bc in
-                        BookcaseElevation(bookcase: bc, target: target, zoom: effectiveZoom) { inspected = $0 }
-                            .id(bc.persistentModelID)
+        GeometryReader { geo in
+            ScrollViewReader { proxy in
+                ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                    HStack(alignment: .bottom, spacing: 26 * effectiveZoom) {
+                        ForEach(bookcases) { bc in
+                            BookcaseElevation(bookcase: bc, target: target, zoom: effectiveZoom) { inspected = $0 }
+                                .id(bc.persistentModelID)
+                        }
                     }
+                    .padding(.horizontal, 30)
+                    .padding(.top, 70)       // room for the location flag above the top shelf
+                    .padding(.bottom, 30)
                 }
-                .padding(.horizontal, 30)
-                .padding(.top, 70)       // room for the location flag above the top shelf
-                .padding(.bottom, 30)
+                // Simultaneous, so a two-finger pinch zooms while one finger still scrolls.
+                .simultaneousGesture(
+                    MagnifyGesture()
+                        .updating($pinch) { v, state, _ in state = v.magnification }
+                        .onEnded { v in
+                            zoom = clampZoom(zoom * v.magnification)
+                            scrollToTarget(proxy)
+                        })
+                .overlay(alignment: .bottomTrailing) {
+                    zoomControls(fit: fitZoom(width: geo.size.width), proxy: proxy)
+                }
+                .onAppear { scrollToTarget(proxy) }
+                .onChange(of: router.highlighted) { _, _ in scrollToTarget(proxy) }
             }
-            .gesture(MagnifyGesture().updating($pinch) { v, s, _ in s = v.magnification }
-                .onEnded { v in zoom = min(max(zoom * v.magnification, 0.5), 3) })
-            .overlay(alignment: .bottomTrailing) { zoomControls }
-            .onAppear { scrollToTarget(proxy) }
-            .onChange(of: router.highlighted) { _, _ in scrollToTarget(proxy) }
         }
+    }
+
+    /// The zoom at which every bookcase fits across the screen.
+    private func fitZoom(width: CGFloat) -> CGFloat {
+        let n = CGFloat(max(bookcases.count, 1))
+        let natural = n * (280 + 16) + (n - 1) * 26     // case widths and gaps at zoom 1
+        return clampZoom((width - 60) / natural)
     }
 
     private func scrollToTarget(_ proxy: ScrollViewProxy) {
@@ -137,11 +157,25 @@ struct FindingAidView: View {
         withAnimation(.easeInOut(duration: 0.6)) { proxy.scrollTo(bc.persistentModelID, anchor: .center) }
     }
 
-    private var zoomControls: some View {
+    private func zoomControls(fit: CGFloat, proxy: ScrollViewProxy) -> some View {
         VStack(spacing: 0) {
-            Button { withAnimation { zoom = min(zoom * 1.25, 3) } } label: { Image(systemName: "plus").frame(width: 40, height: 40) }
-            Divider().frame(width: 40)
-            Button { withAnimation { zoom = max(zoom / 1.25, 0.5) } } label: { Image(systemName: "minus").frame(width: 40, height: 40) }
+            Button { withAnimation(.snappy) { zoom = clampZoom(zoom * 1.4) }; scrollToTarget(proxy) } label: {
+                Image(systemName: "plus").frame(width: 44, height: 40)
+            }
+            Divider().frame(width: 44)
+            Button { withAnimation(.snappy) { zoom = clampZoom(zoom / 1.4) }; scrollToTarget(proxy) } label: {
+                Image(systemName: "minus").frame(width: 44, height: 40)
+            }
+            Divider().frame(width: 44)
+            Button { withAnimation(.snappy) { zoom = fit } } label: {
+                Image(systemName: "arrow.down.right.and.arrow.up.left").frame(width: 44, height: 40)
+            }
+            .accessibilityLabel("Fit all bookcases")
+            Divider().frame(width: 44)
+            Text("\(Int((effectiveZoom * 100).rounded()))%")
+                .font(Theme.mono(10, weight: .bold))
+                .foregroundStyle(Theme.inkMuted)
+                .frame(width: 44, height: 26)
         }
         .font(.system(size: 15, weight: .bold))
         .foregroundStyle(Theme.ink)

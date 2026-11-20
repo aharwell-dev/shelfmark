@@ -286,7 +286,7 @@ struct BookcaseFullView: View {
     @State private var inspected: Book?
     @State private var editingContents: Shelf?
 
-    private var z: CGFloat { min(max(zoom * pinch, 1), 4) }
+    private var z: CGFloat { min(max(zoom * pinch, 1), 6) }
 
     var body: some View {
         NavigationStack {
@@ -305,8 +305,9 @@ struct BookcaseFullView: View {
                     .padding(.trailing, 16)
                     .padding(.vertical, 20)
                 }
-                .gesture(MagnifyGesture().updating($pinch) { v, s, _ in s = v.magnification }
-                    .onEnded { v in zoom = min(max(zoom * v.magnification, 1), 4) })
+                // Simultaneous, so a two-finger pinch zooms while one finger still scrolls.
+                .simultaneousGesture(MagnifyGesture().updating($pinch) { v, state, _ in state = v.magnification }
+                    .onEnded { v in zoom = min(max(zoom * v.magnification, 1), 6) })
             }
             .background(Theme.ground)
             .navigationTitle("\(bookcase.code) · \(bookcase.name)")
@@ -316,9 +317,12 @@ struct BookcaseFullView: View {
                 ToolbarItemGroup(placement: .bottomBar) {
                     Button { withAnimation { zoom = max(zoom / 1.4, 1) } } label: { Image(systemName: "minus.magnifyingglass") }
                     Spacer()
-                    Text("\(bookcase.bookCount) books").font(Theme.mono(12)).foregroundStyle(Theme.inkMuted)
+                    Button { withAnimation { zoom = 1 } } label: {
+                        Text("\(bookcase.bookCount) books · \(Int((z * 100).rounded()))%")
+                            .font(Theme.mono(12)).foregroundStyle(Theme.inkMuted)
+                    }
                     Spacer()
-                    Button { withAnimation { zoom = min(zoom * 1.4, 4) } } label: { Image(systemName: "plus.magnifyingglass") }
+                    Button { withAnimation { zoom = min(zoom * 1.4, 6) } } label: { Image(systemName: "plus.magnifyingglass") }
                 }
             }
             .sheet(item: $inspected) { book in
