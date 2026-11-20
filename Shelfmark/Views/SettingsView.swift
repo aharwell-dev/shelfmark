@@ -258,7 +258,7 @@ struct SettingsView: View {
         }
     }
 
-    private func runImport(replacing: Bool) {
+    @MainActor private func runImport(replacing: Bool) {
         guard let archive = pendingImport else { return }
         pendingImport = nil
         if replacing { router.highlighted = nil }

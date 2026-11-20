@@ -189,15 +189,20 @@ struct CatalogView: View {
         aiError = nil
         defer { aiWorking = false }
         let ordered = books.sorted { $0.dateAdded == $1.dateAdded ? $0.title < $1.title : $0.dateAdded < $1.dateAdded }
-        let catalog = ordered.enumerated().map { i, b in
-            [String(i + 1),
-             [b.title, b.subtitle].filter { !$0.isEmpty }.joined(separator: " : "),
-             b.authorsText, b.year, b.lcCallNumber,
-             b.subjects.joined(separator: "; "),
-             [b.edition, b.publisher].filter { !$0.isEmpty }.joined(separator: ", "),
-             "\(b.address) (\(b.shelf?.bookcase?.name ?? ""))",
-             b.graphicNotes, b.notes].joined(separator: " | ")
-        }.joined(separator: "\n")
+        let lines: [String] = ordered.enumerated().map { pair -> String in
+            let b: Book = pair.element
+            let titleField: String = [b.title, b.subtitle].filter { !$0.isEmpty }.joined(separator: " : ")
+            let imprintField: String = [b.edition, b.publisher].filter { !$0.isEmpty }.joined(separator: ", ")
+            let caseName: String = b.shelf?.bookcase?.name ?? ""
+            let fields: [String] = [String(pair.offset + 1), titleField,
+                                    b.authorsText, b.year, b.lcCallNumber,
+                                    b.subjects.joined(separator: "; "),
+                                    imprintField,
+                                    "\(b.address) (\(caseName))",
+                                    b.graphicNotes, b.notes]
+            return fields.joined(separator: " | ")
+        }
+        let catalog = lines.joined(separator: "\n")
         do {
             let result = try await CatalogSearchService().search(q, catalog: catalog)
             aiInterpretation = result.interpretation

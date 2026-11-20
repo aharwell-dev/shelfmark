@@ -85,7 +85,7 @@ struct ReviewModeView: View {
         .padding(.vertical, 10)
     }
 
-    private func actions(_ book: Book) -> some View {
+    @MainActor private func actions(_ book: Book) -> some View {
         VStack(spacing: 10) {
             Button {
                 book.verified = true
@@ -254,12 +254,12 @@ private struct ShelfStrip: View {
 
     var body: some View {
         GeometryReader { geo in
-            let total = max(books.reduce(0) { $0 + $1.drawingWidth }, 0.001)
+            let total: CGFloat = CGFloat(max(books.reduce(0.0) { $0 + $1.drawingWidth }, 0.001))
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(Array(books.enumerated()), id: \.element.id) { i, b in
                     Rectangle()
                         .fill(Color(hex: b.colorHex, fallback: .gray))
-                        .frame(width: max(geo.size.width * b.drawingWidth / total, 2),
+                        .frame(width: max(geo.size.width * CGFloat(b.drawingWidth) / total, 2),
                                height: geo.size.height * (i == current ? 1 : 0.75))
                         .overlay(alignment: .top) {
                             if b.verified { Circle().fill(.green).frame(width: 4, height: 4).padding(.top, 2) }

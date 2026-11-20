@@ -66,23 +66,26 @@ struct LibraryArchive: Codable {
                             ArchivedPhoto(order: $0.order, image: $0.imageData, pixelWidth: $0.pixelWidth,
                                           pixelHeight: $0.pixelHeight, capturedAt: $0.capturedAt, fromVideo: $0.fromVideo)
                         },
-                        books: shelf.orderedBooks.map { b in
-                            ArchivedBook(
-                                title: b.title, authorsText: b.authorsText, spineText: b.spineText,
-                                graphicNotes: b.graphicNotes, colorHex: b.colorHex, accentColorHex: b.accentColorHex,
-                                confidence: b.confidence, publisher: b.publisher, year: b.year, isbn: b.isbn,
-                                lccn: b.lccn, lcCallNumber: b.lcCallNumber, lcClass: b.lcClass,
-                                subjectsText: b.subjectsText, catalogSource: b.catalogSource,
-                                catalogStatusRaw: b.catalogStatusRaw, notes: b.notes, subtitle: b.subtitle,
-                                edition: b.edition, publicationPlace: b.publicationPlace,
-                                authorHeading: b.authorHeading, callNumberSource: b.callNumberSource,
-                                catalogURL: b.catalogURL, verified: b.verified, position: b.position,
-                                boxX0: b.boxX0, boxX1: b.boxX1, boxY0: b.boxY0, boxY1: b.boxY1,
-                                dateAdded: b.dateAdded, photoOrder: b.photo?.order)
-                        })
+                        books: shelf.orderedBooks.map(archived))
                 })
         }
         return archive
+    }
+
+    @MainActor
+    private static func archived(_ b: Book) -> ArchivedBook {
+        ArchivedBook(
+            title: b.title, authorsText: b.authorsText, spineText: b.spineText,
+            graphicNotes: b.graphicNotes, colorHex: b.colorHex, accentColorHex: b.accentColorHex,
+            confidence: b.confidence, publisher: b.publisher, year: b.year, isbn: b.isbn,
+            lccn: b.lccn, lcCallNumber: b.lcCallNumber, lcClass: b.lcClass,
+            subjectsText: b.subjectsText, catalogSource: b.catalogSource,
+            catalogStatusRaw: b.catalogStatusRaw, notes: b.notes, subtitle: b.subtitle,
+            edition: b.edition, publicationPlace: b.publicationPlace,
+            authorHeading: b.authorHeading, callNumberSource: b.callNumberSource,
+            catalogURL: b.catalogURL, verified: b.verified, position: b.position,
+            boxX0: b.boxX0, boxX1: b.boxX1, boxY0: b.boxY0, boxY1: b.boxY1,
+            dateAdded: b.dateAdded, photoOrder: b.photo?.order)
     }
 
     func encoded() throws -> Data {
@@ -181,7 +184,6 @@ struct LibraryDocument: FileDocument {
 /// Writes dated backups into a folder the user picks once (normally in iCloud Drive, so the
 /// files sync to their other devices). Works with a free Apple developer account, which can't
 /// use CloudKit. Keeps the ten most recent backups.
-@MainActor
 enum BackupManager {
     private static let bookmarkKey = "backupFolderBookmark"
     private static let lastBackupKey = "lastBackupDate"
@@ -224,7 +226,7 @@ enum BackupManager {
     }
 
     /// Writes a backup now. Returns the file name.
-    @discardableResult
+    @MainActor @discardableResult
     static func backUp(context: ModelContext) async throws -> String {
         guard let folder = resolveFolder() else { throw CocoaError(.fileNoSuchFile) }
         let archive = try LibraryArchive.make(from: context)
@@ -254,6 +256,7 @@ enum BackupManager {
 
     /// Called when the app goes to the background: backs up if automatic backup is on and the
     /// last one is more than a day old.
+    @MainActor
     static func backUpIfDue(context: ModelContext) {
         guard automatic, isConfigured else { return }
         if let last = lastBackup, Date().timeIntervalSince(last) < 24 * 3600 { return }

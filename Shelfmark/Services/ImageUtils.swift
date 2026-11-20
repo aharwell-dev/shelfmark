@@ -74,10 +74,10 @@ enum ImageUtils {
         let lo = samples.count / 5, hi = samples.count - samples.count / 5
         let kept = samples[lo..<max(hi, lo + 1)]
         let n = Double(kept.count)
-        let r = kept.reduce(0) { $0 + $1.r } / n
-        let g = kept.reduce(0) { $0 + $1.g } / n
-        let b = kept.reduce(0) { $0 + $1.b } / n
-        return String(format: "#%02X%02X%02X", Int(r.rounded()), Int(g.rounded()), Int(b.rounded()))
+        let red = kept.reduce(0.0) { $0 + $1.r } / n
+        let green = kept.reduce(0.0) { $0 + $1.g } / n
+        let blue = kept.reduce(0.0) { $0 + $1.b } / n
+        return String(format: "#%02X%02X%02X", Int(red.rounded()), Int(green.rounded()), Int(blue.rounded()))
     }
 
     /// Splits a wide image into overlapping tiles no wider than `maxAspect` × height,
