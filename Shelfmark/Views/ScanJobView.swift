@@ -13,7 +13,7 @@ struct ScanJobView: View {
 
     struct EditTarget: Identifiable { let segment: Int; let book: Int; var id: String { "\(segment)-\(book)" } }
 
-    private var pipeline: ScanPipeline { job.pipeline }
+    @MainActor private var pipeline: ScanPipeline { job.pipeline }
 
     var body: some View {
         NavigationStack {
@@ -47,7 +47,7 @@ struct ScanJobView: View {
 
     // MARK: Review
 
-    private var review: some View {
+    @MainActor private var review: some View {
         let included = pipeline.allBooks.filter(\.include).count
         return VStack(spacing: 0) {
             ScrollView {
@@ -97,11 +97,11 @@ struct ScanJobView: View {
         }
     }
 
-    private func offset(before segment: Int) -> Int {
+    @MainActor private func offset(before segment: Int) -> Int {
         pipeline.segments.prefix(segment).reduce(0) { $0 + $1.books.count }
     }
 
-    private func failure(_ message: String) -> some View {
+    @MainActor private func failure(_ message: String) -> some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 44)).foregroundStyle(Theme.signal)
             Text("Scan failed").font(Theme.display(28))
@@ -144,7 +144,7 @@ struct LiveIndicator: View {
 struct ScanProgressDetail: View {
     let job: ScanJob
     let place: Int?
-    private var pipeline: ScanPipeline { job.pipeline }
+    @MainActor private var pipeline: ScanPipeline { job.pipeline }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { tl in
@@ -208,6 +208,7 @@ struct ScanProgressDetail: View {
     }
 }
 
+@MainActor
 private struct StepList: View {
     let pipeline: ScanPipeline
     let now: Date
@@ -384,6 +385,7 @@ func formatDuration(_ t: TimeInterval) -> String {
 
 // MARK: - Queue card (shown on the Scan screen)
 
+@MainActor
 struct ScanJobCard: View {
     let job: ScanJob
     let place: Int?

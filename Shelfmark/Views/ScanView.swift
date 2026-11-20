@@ -189,7 +189,7 @@ struct ScanView: View {
 
     // MARK: Queue
 
-    private var queueSection: some View {
+    @MainActor private var queueSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 SectionLabel(text: queue.activeCount > 0 ? "Processing · \(queue.activeCount)" : "Scans")
@@ -228,7 +228,7 @@ struct ScanView: View {
 
     /// Adds the capture to the background queue and moves on to the next shelf,
     /// so the user can keep photographing without waiting.
-    private func enqueue(_ input: ScanInput) {
+    @MainActor private func enqueue(_ input: ScanInput) {
         guard let shelf = selectedShelf else { return }
         queue.enqueue(shelf: shelf, mode: saveMode, input: input)
         var message = "Shelf \(shelf.label) added to queue"
@@ -241,7 +241,7 @@ struct ScanView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { withAnimation { toast = nil } }
     }
 
-    private func loadPicked(_ items: [PhotosPickerItem]) async {
+    @MainActor private func loadPicked(_ items: [PhotosPickerItem]) async {
         defer { pickerItems = [] }
         // A single video becomes a panorama; otherwise photos are treated as left-to-right sections.
         if let videoItem = items.first(where: { $0.supportedContentTypes.contains { $0.conforms(to: .movie) } }) {

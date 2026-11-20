@@ -449,7 +449,7 @@ func apply(_ c: CatalogRecord, to book: Book) {
 }
 
 /// Runs CPU-heavy image work off the main thread so the camera and UI stay responsive.
-func offMain<T>(_ work: @escaping () -> T) async -> T {
+func offMain<T: Sendable>(_ work: @escaping () -> T) async -> T {
     await Task.detached(priority: .userInitiated) { work() }.value
 }
 
