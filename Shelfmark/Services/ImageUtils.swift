@@ -44,21 +44,40 @@ enum ImageUtils {
         return cg.cropping(to: px)
     }
 
-    /// Average color of a normalized region, as a hex string. Samples the central part of
-    /// the region to avoid shelf edges and neighbouring spines.
+    /// The spine's own color, as a hex string.
+    ///
+    /// Samples a central strip of the spine (avoiding its edges, neighbouring books and the
+    /// shelf), then takes a trimmed mean: the darkest and lightest fifth of pixels by luminance
+    /// are dropped, which removes lettering, gilt, highlights and shadow, and the rest averaged.
     static func averageColorHex(_ cg: CGImage, normalized r: CGRect) -> String? {
-        let inset = r.insetBy(dx: r.width * 0.2, dy: r.height * 0.15)
-        guard let crop = crop(cg, normalized: inset) else { return nil }
-        let input = CIImage(cgImage: crop)
-        let filter = CIFilter.areaAverage()
-        filter.inputImage = input
-        filter.extent = input.extent
-        guard let output = filter.outputImage else { return nil }
-        var px = [UInt8](repeating: 0, count: 4)
-        ciContext.render(output, toBitmap: &px, rowBytes: 4,
-                         bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-                         format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
-        return String(format: "#%02X%02X%02X", px[0], px[1], px[2])
+        let strip = CGRect(x: r.minX + r.width * 0.3, y: r.minY + r.height * 0.12,
+                           width: r.width * 0.4, height: r.height * 0.76)
+        guard let crop = crop(cg, normalized: strip) else { return nil }
+        let w = 12, h = 48
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn: Bool = px.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.interpolationQuality = .medium
+            ctx.draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+        var samples: [(l: Double, r: Double, g: Double, b: Double)] = []
+        samples.reserveCapacity(w * h)
+        for i in stride(from: 0, to: px.count, by: 4) {
+            let r = Double(px[i]), g = Double(px[i + 1]), b = Double(px[i + 2])
+            samples.append((0.299 * r + 0.587 * g + 0.114 * b, r, g, b))
+        }
+        samples.sort { $0.l < $1.l }
+        let lo = samples.count / 5, hi = samples.count - samples.count / 5
+        let kept = samples[lo..<max(hi, lo + 1)]
+        let n = Double(kept.count)
+        let r = kept.reduce(0) { $0 + $1.r } / n
+        let g = kept.reduce(0) { $0 + $1.g } / n
+        let b = kept.reduce(0) { $0 + $1.b } / n
+        return String(format: "#%02X%02X%02X", Int(r.rounded()), Int(g.rounded()), Int(b.rounded()))
     }
 
     /// Splits a wide image into overlapping tiles no wider than `maxAspect` × height,

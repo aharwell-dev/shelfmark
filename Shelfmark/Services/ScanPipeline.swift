@@ -33,8 +33,10 @@ struct DraftSegment: Identifiable {
 }
 
 enum ScanInput {
+    /// Photos already cropped to the shelf the user framed.
     case photos([UIImage])
-    case video(URL)
+    /// A video pan, with the vertical band (normalized, top-left origin) framing the shelf.
+    case video(URL, band: CGRect?)
 }
 
 enum SaveMode: String, CaseIterable, Identifiable {
@@ -168,11 +170,11 @@ final class ScanPipeline {
                 detail = photos.count == 1 ? "Straightening and sizing the photo" : "Preparing \(photos.count) photos"
                 log("Started scan of \(photos.count) photo\(photos.count == 1 ? "" : "s")")
                 images = await offMain { photos.compactMap { ImageUtils.normalized($0).map { ($0, false) } } }
-            case .video(let url):
+            case .video(let url, let band):
                 stage = .stitching
                 detail = "Aligning video frames into one panorama"
                 log("Started stitching video")
-                images = [(try await VideoStitcher.panorama(from: url), true)]
+                images = [(try await VideoStitcher.panorama(from: url, band: band), true)]
                 log("Panorama ready")
             }
             try Task.checkCancellation()
@@ -364,6 +366,7 @@ final class ScanPipeline {
             work.map { ($0.0, $0.1, segments[$0.0].books[$0.1].reading) }
         let total = jobs.count
         let catalog = self.catalog
+        let deep = AppSettings.deepCatalogSearch
 
         await withTaskGroup(of: (Int, Int, String, CatalogRecord?).self) { group in
             var next = 0
@@ -372,7 +375,9 @@ final class ScanPipeline {
                 let r = job.reading
                 group.addTask {
                     await MainActor.run { self.catalogInFlight.append(r.title) }
-                    let record = await catalog.lookup(title: r.title, authors: r.authors, publisherHint: r.publisher)
+                    let clues = BookClues(title: r.title, authors: r.authors, publisher: r.publisher,
+                                          spineText: r.spineText, designNotes: r.graphicNotes)
+                    let record = await catalog.lookup(clues, deep: deep)
                     return (job.segment, job.book, r.title, record)
                 }
             }
@@ -436,16 +441,22 @@ final class ScanPipeline {
 
 func apply(_ c: CatalogRecord, to book: Book) {
     if !c.title.isEmpty { book.title = c.title }
+    book.subtitle = c.subtitle
     if !c.authors.isEmpty { book.authorsText = c.authors.joined(separator: ", ") }
+    book.authorHeading = c.authorHeading
     if !c.publisher.isEmpty { book.publisher = c.publisher }
+    book.edition = c.edition
+    book.publicationPlace = c.place
     book.year = c.year
     book.isbn = c.isbn
     book.lccn = c.lccn
     book.lcCallNumber = c.lcCallNumber
     book.lcClass = c.lcClass
+    book.callNumberSource = c.callNumberSource
     book.subjectsText = c.subjects.joined(separator: " | ")
     book.catalogSource = c.sources.joined(separator: " + ")
-    book.catalogStatus = c.isComplete ? .matched : .partial
+    book.catalogURL = c.catalogURL
+    book.catalogStatus = c.hasAuthoritativeCallNumber ? .matched : .partial
 }
 
 /// Runs CPU-heavy image work off the main thread so the camera and UI stay responsive.

@@ -10,6 +10,7 @@ struct ScanJobView: View {
     @Environment(ScanQueue.self) private var queue
     @State private var selected: DraftBook.ID?
     @State private var editing: EditTarget?
+    @State private var contentsShelf: Shelf?
 
     struct EditTarget: Identifiable { let segment: Int; let book: Int; var id: String { "\(segment)-\(book)" } }
 
@@ -38,6 +39,13 @@ struct ScanJobView: View {
                 }
             }
         }
+        .sheet(item: $contentsShelf, onDismiss: {
+            // Once the shelf is described, this scan has nothing left to save.
+            if let shelf = context.model(for: job.shelfID) as? Shelf, shelf.holdsNonBooks {
+                queue.remove(job)
+                dismiss()
+            }
+        }) { ShelfContentsEditor(shelf: $0) }
         .sheet(item: $editing) { target in
             DraftEditor(book: Bindable(job.pipeline).segments[target.segment].books[target.book])
         }
@@ -50,6 +58,27 @@ struct ScanJobView: View {
         return VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if pipeline.allBooks.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("No books were found on this shelf.", systemImage: "books.vertical").font(.headline)
+                            Text("If it holds something else, say what, and the finding aid will show it.")
+                                .font(.footnote).foregroundStyle(Theme.inkMuted)
+                            Button("Describe what's on this shelf") {
+                                contentsShelf = context.model(for: job.shelfID) as? Shelf
+                            }
+                            .buttonStyle(SignalButtonStyle(filled: false))
+                        }
+                        .padding(12)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    let unknown = pipeline.allBooks.filter { $0.include && ($0.reading.title.isEmpty || $0.catalog == nil) }.count
+                    if unknown > 0 {
+                        Label("\(unknown) spine\(unknown == 1 ? "" : "s") couldn't be fully identified. Tap one below to identify it by cover photo or title, or fix it later in review mode.",
+                              systemImage: "questionmark.circle.fill")
+                            .font(.footnote).foregroundStyle(.yellow)
+                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    }
                     ForEach(pipeline.warnings, id: \.self) { w in
                         Label(w, systemImage: "exclamationmark.triangle.fill")
                             .font(.footnote).foregroundStyle(.yellow)
@@ -79,13 +108,26 @@ struct ScanJobView: View {
                 .padding()
             }
             VStack(spacing: 6) {
-                Button {
-                    queue.save(job, context: context, router: router)
-                    dismiss()
-                } label: {
-                    Text("Save \(included) books to \(job.shelfLabel)")
+                HStack(spacing: 10) {
+                    Button {
+                        queue.save(job, context: context, router: router)
+                        dismiss()
+                    } label: {
+                        Text("Save \(included) books")
+                    }
+                    .buttonStyle(SignalButtonStyle())
+                    Button {
+                        let shelf = context.model(for: job.shelfID) as? Shelf
+                        queue.save(job, context: context, router: router)
+                        dismiss()
+                        if let shelf {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { router.reviewShelf = shelf }
+                        }
+                    } label: {
+                        Text("Save & review")
+                    }
+                    .buttonStyle(SignalButtonStyle(filled: false))
                 }
-                .buttonStyle(SignalButtonStyle())
                 .disabled(included == 0)
                 Text(job.mode == .replace ? "Replaces anything previously cataloged on this shelf." : "Adds to the right end of this shelf.")
                     .font(.caption2).foregroundStyle(Theme.inkMuted)
@@ -571,10 +613,20 @@ private struct DraftEditor: View {
     @State private var title = ""
     @State private var authors = ""
     @State private var searching = false
+    @State private var identifying = false
 
     var body: some View {
         NavigationStack {
             Form {
+                if book.reading.title.isEmpty || book.catalog == nil {
+                    Section {
+                        Button { identifying = true } label: {
+                            Label("Identify by cover photo or title", systemImage: "camera.viewfinder")
+                        }
+                    } footer: {
+                        Text("Photograph the cover, title page or copyright page, or type what you know.")
+                    }
+                }
                 Section("As read from the spine") {
                     Text(book.reading.spineText.isEmpty ? "—" : book.reading.spineText).font(.callout.italic())
                     if !book.reading.graphicNotes.isEmpty { Text(book.reading.graphicNotes).font(.caption).foregroundStyle(.secondary) }
@@ -614,6 +666,17 @@ private struct DraftEditor: View {
                 title = book.catalog?.title.nilIfEmpty ?? book.reading.title
                 authors = book.displayAuthors
             }
+            .sheet(isPresented: $identifying) {
+                IdentifyBookView(initialTitle: title, initialAuthors: authors,
+                                 spineText: book.reading.spineText, designNotes: book.reading.graphicNotes) { record, clues in
+                    book.reading.title = record?.title ?? clues.title
+                    book.reading.authors = record?.authors ?? clues.authors
+                    if !clues.publisher.isEmpty { book.reading.publisher = clues.publisher }
+                    book.catalog = record
+                    title = book.reading.title
+                    authors = book.displayAuthors
+                }
+            }
         }
     }
 
@@ -623,6 +686,8 @@ private struct DraftEditor: View {
         let a = authors.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         book.reading.title = title
         book.reading.authors = a
-        book.catalog = await CatalogService().lookup(title: title, authors: a)
+        let clues = BookClues(title: title, authors: a, publisher: book.reading.publisher,
+                              spineText: book.reading.spineText, designNotes: book.reading.graphicNotes)
+        book.catalog = await CatalogService().lookup(clues, deep: AppSettings.deepCatalogSearch)
     }
 }

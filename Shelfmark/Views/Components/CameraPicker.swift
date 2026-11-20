@@ -64,7 +64,7 @@ struct PickedMovie: Transferable {
 enum CameraPresenter {
     private static var activeDelegate: Delegate?
 
-    static func present(onFinish: @escaping (CameraPicker.Result?) -> Void) {
+    static func present(photoOnly: Bool = false, onFinish: @escaping (CameraPicker.Result?) -> Void) {
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
             onFinish(nil)
             return
@@ -73,7 +73,7 @@ enum CameraPresenter {
 
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+        picker.mediaTypes = photoOnly ? [UTType.image.identifier] : [UTType.image.identifier, UTType.movie.identifier]
         picker.cameraCaptureMode = .photo
         picker.videoQuality = .typeHigh
         picker.videoMaximumDuration = 120

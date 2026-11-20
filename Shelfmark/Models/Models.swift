@@ -54,6 +54,8 @@ final class Shelf {
     var number: Int
     var bookcase: Bookcase?
     var lastScanned: Date?
+    /// What the shelf holds when it isn't books (e.g. "Records", "Ceramics", "Empty").
+    var contentsNote: String = ""
 
     @Relationship(deleteRule: .cascade, inverse: \ShelfPhoto.shelf)
     var photos: [ShelfPhoto] = []
@@ -69,6 +71,7 @@ final class Shelf {
     var orderedBooks: [Book] { books.sorted { $0.position < $1.position } }
 
     var label: String { "\(bookcase?.code ?? "?")-\(number)" }
+    var holdsNonBooks: Bool { !contentsNote.isEmpty }
 
     /// Re-numbers books left to right: by photo segment, then by horizontal position in that photo.
     func renumberBooks() {
@@ -136,6 +139,18 @@ final class Book {
     var catalogStatusRaw: String
     var notes: String
 
+    // Fuller LC-style record (added in v0.2; defaults keep existing catalogs readable)
+    var subtitle: String = ""
+    var edition: String = ""
+    var publicationPlace: String = ""
+    /// Main-entry heading in LC form, e.g. "Jacobs, Jane, 1916-2006".
+    var authorHeading: String = ""
+    /// Where the call number came from: "Library of Congress", "WorldCat", "Open Library", "Proposed (LC-style)".
+    var callNumberSource: String = ""
+    var catalogURL: String = ""
+    /// Set when the user confirms the identification in review mode.
+    var verified: Bool = false
+
     // Location
     var position: Int
     /// Spine bounds in the source photo, normalized 0–1 with origin at top-left.
@@ -196,13 +211,34 @@ final class Book {
         return "\(bookcase.name)\(room), shelf \(shelf.number) from the top, book \(position) from the left"
     }
 
+    /// A compact title for spine drawings: drops a leading article and any subtitle.
+    var shortTitle: String {
+        var t = title.isEmpty ? "Unidentified" : title
+        if let colon = t.firstIndex(where: { $0 == ":" || $0 == ";" }) { t = String(t[..<colon]) }
+        for article in ["The ", "A ", "An "] where t.hasPrefix(article) && t.count > article.count + 3 {
+            t = String(t.dropFirst(article.count))
+        }
+        return t.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Surname of the first author, for the foot of a drawn spine.
+    var authorSurname: String {
+        if !authorHeading.isEmpty, let comma = authorHeading.firstIndex(of: ",") {
+            return String(authorHeading[..<comma])
+        }
+        let first = authorsText.split(separator: ",").first.map(String.init) ?? authorsText
+        return first.split(separator: " ").last.map(String.init) ?? ""
+    }
+
+    var isUnidentified: Bool { title.isEmpty || catalogStatus == .pending }
+
     var subjects: [String] {
         subjectsText.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
     /// Text used for search: everything a person might type.
     var searchBlob: String {
-        [title, authorsText, spineText, publisher, year, isbn, lccn, lcCallNumber, subjectsText, address, notes]
+        [title, subtitle, authorsText, authorHeading, spineText, publisher, edition, year, isbn, lccn, lcCallNumber, subjectsText, address, notes]
             .joined(separator: " ")
     }
 

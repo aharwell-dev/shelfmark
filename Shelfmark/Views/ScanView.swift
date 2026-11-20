@@ -20,6 +20,8 @@ struct ScanView: View {
     @State private var loadError: String?
     @State private var cameraDenied = false
     @State private var toast: String?
+    @State private var framing: Framing?
+    @State private var contentsShelf: Shelf?
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,14 @@ struct ScanView: View {
             }
             .sheet(item: $openJob) { job in
                 ScanJobView(job: job)
+            }
+            .sheet(item: $contentsShelf) { ShelfContentsEditor(shelf: $0) }
+            .fullScreenCover(item: $framing) { f in
+                ShelfBoundsView(image: f.currentImage, verticalOnly: f.isVideo,
+                                title: "Frame shelf \(selectedShelf?.label ?? "")",
+                                subtitle: f.count > 1 ? "Photo \(f.index + 1) of \(f.count)" : nil,
+                                onDone: { advanceFraming($0) },
+                                onCancel: { framing = nil })
             }
             .alert("Camera access is off", isPresented: $cameraDenied) {
                 Button("Open Settings") {
@@ -134,6 +144,16 @@ struct ScanView: View {
 
     private func captureControls(_ shelf: Shelf) -> some View {
         VStack(spacing: 12) {
+            if shelf.holdsNonBooks {
+                HStack {
+                    Label("This shelf holds: \(shelf.contentsNote)", systemImage: "square.dashed")
+                        .font(.footnote)
+                    Spacer()
+                    Button("Change") { contentsShelf = shelf }.font(.footnote.bold())
+                }
+                .padding(10)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            }
             if !shelf.books.isEmpty {
                 Picker("When saving", selection: $saveMode) {
                     ForEach(SaveMode.allCases) { Text($0.rawValue).tag($0) }
@@ -157,6 +177,12 @@ struct ScanView: View {
                         .frame(maxWidth: .infinity)
                         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 12))
                 }
+            }
+            if !shelf.holdsNonBooks {
+                Button { contentsShelf = shelf } label: {
+                    Label("No books on this shelf…", systemImage: "square.dashed").font(.footnote.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -218,8 +244,8 @@ struct ScanView: View {
     @MainActor private func presentCamera() {
         CameraPresenter.present { result in
             switch result {
-            case .photo(let img): enqueue(.photos([img]))
-            case .video(let url): enqueue(.video(url))
+            case .photo(let img): framing = Framing(source: .photos([img]))
+            case .video(let url): beginVideoFraming(url)
             case nil: break
             }
         }
@@ -240,13 +266,53 @@ struct ScanView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { withAnimation { toast = nil } }
     }
 
+    // MARK: Framing the shelf
+
+    /// Records the frame for the current photo; when every photo is framed, crops and queues them.
+    @MainActor private func advanceFraming(_ rect: CGRect) {
+        guard var f = framing else { return }
+        f.crops.append(rect)
+        if f.index + 1 < f.count {
+            f.index += 1
+            framing = f
+            return
+        }
+        framing = nil
+        switch f.source {
+        case .photos(let photos):
+            enqueue(.photos(zip(photos, f.crops).map { Self.crop($0, to: $1) }))
+        case .video(let url, _):
+            enqueue(.video(url, band: rect.height < 0.999 ? rect : nil))
+        }
+    }
+
+    @MainActor private func beginVideoFraming(_ url: URL) {
+        Task { @MainActor in
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            generator.appliesPreferredTrackTransform = true
+            if let first = try? await generator.image(at: CMTime(seconds: 0.2, preferredTimescale: 600)) {
+                framing = Framing(source: .video(url, frame: UIImage(cgImage: first.image)))
+            } else {
+                enqueue(.video(url, band: nil))
+            }
+        }
+    }
+
+    /// Crops a photo to the framed shelf (normalized rect, top-left origin).
+    private static func crop(_ image: UIImage, to rect: CGRect) -> UIImage {
+        guard rect.width < 0.999 || rect.height < 0.999,
+              let upright = ImageUtils.normalized(image),
+              let cropped = ImageUtils.crop(upright, normalized: rect) else { return image }
+        return UIImage(cgImage: cropped)
+    }
+
     @MainActor private func loadPicked(_ items: [PhotosPickerItem]) async {
         defer { pickerItems = [] }
         // A single video becomes a panorama; otherwise photos are treated as left-to-right sections.
         if let videoItem = items.first(where: { $0.supportedContentTypes.contains { $0.conforms(to: .movie) } }) {
             do {
                 if let movie = try await videoItem.loadTransferable(type: PickedMovie.self) {
-                    enqueue(.video(movie.url))
+                    beginVideoFraming(movie.url)
                 }
             } catch { loadError = error.localizedDescription }
             return
@@ -258,7 +324,7 @@ struct ScanView: View {
             }
         }
         if images.isEmpty { loadError = "None of the selected items could be read as photos." }
-        else { enqueue(.photos(images)) }
+        else { framing = Framing(source: .photos(images)) }
     }
 }
 
@@ -278,7 +344,9 @@ struct BookcasePicker: View {
                             .foregroundStyle(selected == shelf ? Theme.signal : Theme.inkMuted)
                         ZStack(alignment: .bottomLeading) {
                             Rectangle().fill(selected == shelf ? Theme.signalSoft : Color.black.opacity(0.35))
-                            if shelf.books.isEmpty {
+                            if shelf.holdsNonBooks {
+                                NonBookShelfFill(note: shelf.contentsNote)
+                            } else if shelf.books.isEmpty {
                                 Text("not scanned").font(Theme.mono(11)).foregroundStyle(Theme.inkMuted)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                             } else {
@@ -316,6 +384,27 @@ struct MiniShelf: View {
                 }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
+        }
+    }
+}
+
+/// Photos (or a video's first frame) waiting for the user to frame the shelf.
+struct Framing: Identifiable {
+    enum Source {
+        case photos([UIImage])
+        case video(URL, frame: UIImage)
+    }
+    let id = UUID()
+    let source: Source
+    var index = 0
+    var crops: [CGRect] = []
+
+    var count: Int { if case .photos(let p) = source { return p.count } else { return 1 } }
+    var isVideo: Bool { if case .video = source { return true } else { return false } }
+    var currentImage: UIImage {
+        switch source {
+        case .photos(let p): return p[min(index, p.count - 1)]
+        case .video(_, let frame): return frame
         }
     }
 }

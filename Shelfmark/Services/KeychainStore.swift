@@ -53,4 +53,10 @@ enum AppSettings {
         get { UserDefaults.standard.string(forKey: "claudeEffort") ?? "medium" }
         set { UserDefaults.standard.set(newValue, forKey: "claudeEffort") }
     }
+
+    /// After the fast catalog sources, research unmatched books with Claude and web search.
+    static var deepCatalogSearch: Bool {
+        get { UserDefaults.standard.object(forKey: "deepCatalogSearch") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "deepCatalogSearch") }
+    }
 }

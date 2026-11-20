@@ -15,6 +15,14 @@ targets:
     platform: iOS
     sources:
       - Shelfmark
+    info:
+      path: Shelfmark/Info.plist
+      properties:
+        # The Library of Congress catalog's SRU server is only offered over plain HTTP.
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            lx2.loc.gov:
+              NSExceptionAllowsInsecureHTTPLoads: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: edu.yale.yudw.shelfmark

@@ -154,6 +154,7 @@ struct FindingAidView: View {
 private struct TargetCard: View {
     let book: Book
     let clear: () -> Void
+    @Environment(Router.self) private var router
 
     var body: some View {
         HStack(spacing: 12) {
@@ -163,7 +164,14 @@ private struct TargetCard: View {
                 Text(book.addressDescription).font(.caption).foregroundStyle(Theme.inkMuted).lineLimit(2)
             }
             Spacer()
-            AddressBadge(address: book.address)
+            VStack(alignment: .trailing, spacing: 6) {
+                AddressBadge(address: book.address)
+                if let shelf = book.shelf {
+                    Button { router.reviewShelf = shelf } label: {
+                        Text("Review shelf").font(.caption2.bold())
+                    }
+                }
+            }
             Button(action: clear) { Image(systemName: "xmark").font(.caption.weight(.bold)).padding(6) }
                 .foregroundStyle(Theme.inkMuted)
         }
@@ -185,6 +193,7 @@ struct BookcaseElevation: View {
     let target: Book?
     let zoom: CGFloat
     let onTap: (Book) -> Void
+    @Environment(Router.self) private var router
 
     private var shelfHeight: CGFloat { 74 * zoom }
     private var caseWidth: CGFloat { 280 * zoom }
@@ -218,6 +227,12 @@ struct BookcaseElevation: View {
     }
 
     private var header: some View {
+        Button { router.fullBookcase = bookcase } label: { headerLabel }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows the whole bookcase with spine titles")
+    }
+
+    private var headerLabel: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(bookcase.code)
                 .font(Theme.display(34 * min(zoom, 1.4)))
@@ -226,6 +241,8 @@ struct BookcaseElevation: View {
                 Text(bookcase.name).font(.subheadline.weight(.bold)).lineLimit(1)
                 if !bookcase.room.isEmpty { Text(bookcase.room).font(.caption).foregroundStyle(Theme.inkMuted) }
             }
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.caption.weight(.bold)).foregroundStyle(Theme.inkMuted)
         }
     }
 
@@ -237,7 +254,9 @@ struct BookcaseElevation: View {
         return ZStack(alignment: .bottomLeading) {
             // Back of the shelf bay.
             Rectangle().fill(Color.black.opacity(isTargetShelf ? 0.25 : 0.45))
-            if books.isEmpty {
+            if shelf.holdsNonBooks {
+                NonBookShelfFill(note: shelf.contentsNote)
+            } else if books.isEmpty {
                 Text("shelf \(shelf.number) · not scanned")
                     .font(Theme.mono(10 * min(zoom, 1.3)))
                     .foregroundStyle(Theme.inkMuted)
@@ -275,7 +294,8 @@ struct BookcaseElevation: View {
         let othersDim = target != nil && !isTarget
 
         return SpineSwatch(colorHex: book.colorHex, accentHex: book.accentColorHex,
-                           title: zoom > 1.6 ? book.title : "", width: w, height: h)
+                           title: zoom > 1.3 ? book.shortTitle : "", author: zoom > 1.8 ? book.authorSurname : "",
+                           width: w, height: h)
             .saturation(othersDim ? 0.15 : 1)
             .opacity(othersDim ? 0.45 : 1)
             .overlay { if isTarget { PulseRing() } }

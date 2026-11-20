@@ -13,7 +13,7 @@ enum VideoStitcher {
         var errorDescription: String? { "Couldn't read frames from that video." }
     }
 
-    static func panorama(from url: URL, frameInterval: Double = 0.4, frameHeight: CGFloat = 1400) async throws -> CGImage {
+    static func panorama(from url: URL, band: CGRect? = nil, frameInterval: Double = 0.4, frameHeight: CGFloat = 1400) async throws -> CGImage {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
         let generator = AVAssetImageGenerator(asset: asset)
@@ -26,7 +26,9 @@ enum VideoStitcher {
         while t < max(duration, 0.01) {
             let time = CMTime(seconds: t, preferredTimescale: 600)
             if let result = try? await generator.image(at: time) {
-                let img = result.image
+                // Keep only the band the user framed (the shelf itself), dropping shelves above and below.
+                var img = result.image
+                if let band, let cropped = ImageUtils.crop(img, normalized: band) { img = cropped }
                 frames.append(ImageUtils.scaled(img, maxEdge: max(frameHeight, CGFloat(img.width) * frameHeight / CGFloat(img.height))))
             }
             t += frameInterval

@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
@@ -15,6 +16,17 @@ struct SettingsView: View {
     @State private var exportURL: URL?
     @State private var recataloging = false
     @State private var recatalogProgress = 0
+    @State private var deepSearch = AppSettings.deepCatalogSearch
+    @State private var recoloring = false
+    @State private var exportDoc: LibraryDocument?
+    @State private var showExporter = false
+    @State private var showImporter = false
+    @State private var pendingImport: LibraryArchive?
+    @State private var pickingFolder = false
+    @State private var autoBackup = BackupManager.automatic
+    @State private var backupStatus: String?
+    @State private var backingUp = false
+    @State private var message: String?
 
     var body: some View {
         NavigationStack {
@@ -72,20 +84,82 @@ struct SettingsView: View {
                     Text("Shelf photos are sent to the Claude API to identify spines. Your key is stored in the iOS Keychain on this device only.")
                 }
 
-                Section("Catalog") {
+                Section {
+                    Toggle(isOn: $deepSearch) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Research unmatched books online")
+                            Text("Claude searches library catalogs, WorldCat and publisher records when the Library of Congress lookup comes up short. Slower, and uses a little more of your API credit.")
+                                .font(.caption).foregroundStyle(Theme.inkMuted)
+                        }
+                    }
+                    .onChange(of: deepSearch) { _, v in AppSettings.deepCatalogSearch = v }
                     Button {
                         Task { await recatalog() }
                     } label: {
-                        Label(recataloging ? "Looking up… \(recatalogProgress)" : "Retry LC lookup for unmatched books",
+                        Label(recataloging ? "Looking up… \(recatalogProgress)" : "Look up all unmatched books again",
                               systemImage: "building.columns")
                     }
                     .disabled(recataloging)
+                    Button {
+                        Task { await recomputeColors() }
+                    } label: {
+                        Label(recoloring ? "Measuring colors…" : "Remeasure spine colors from photos", systemImage: "paintpalette")
+                    }
+                    .disabled(recoloring)
                     Button { exportURL = CatalogExport.csv(books) } label: {
-                        Label("Export catalog (CSV)", systemImage: "square.and.arrow.up")
+                        Label("Export catalog as spreadsheet (CSV)", systemImage: "tablecells")
                     }
                     if let exportURL {
                         ShareLink(item: exportURL) { Label("Share \(exportURL.lastPathComponent)", systemImage: "doc.text") }
                     }
+                } header: {
+                    Text("Catalog")
+                }
+
+                Section {
+                    Button {
+                        do {
+                            let archive = try LibraryArchive.make(from: context)
+                            exportDoc = LibraryDocument(data: try archive.encoded())
+                            showExporter = true
+                        } catch { message = "Export failed: \(error.localizedDescription)" }
+                    } label: {
+                        Label("Export library to a file", systemImage: "square.and.arrow.up")
+                    }
+                    Button { pickingFolder = false; showImporter = true } label: {
+                        Label("Import a library file", systemImage: "square.and.arrow.down")
+                    }
+                } header: {
+                    Text("Library file")
+                } footer: {
+                    Text("A library file holds everything: bookcases, shelves, shelf photos and every catalog record. Use it to move your library to another iPhone or keep a copy.")
+                }
+
+                Section {
+                    if BackupManager.isConfigured {
+                        LabeledContent("Folder", value: BackupManager.folderName ?? "Unavailable")
+                        Toggle("Back up automatically (daily)", isOn: $autoBackup)
+                            .onChange(of: autoBackup) { _, v in BackupManager.automatic = v }
+                        Button {
+                            Task { await backUpNow() }
+                        } label: {
+                            Label(backingUp ? "Backing up…" : "Back up now", systemImage: "icloud.and.arrow.up")
+                        }
+                        .disabled(backingUp)
+                        if let last = BackupManager.lastBackup {
+                            LabeledContent("Last backup", value: last.formatted(date: .abbreviated, time: .shortened))
+                        }
+                        Button("Choose a different folder") { pickingFolder = true; showImporter = true }
+                    } else {
+                        Button { pickingFolder = true; showImporter = true } label: {
+                            Label("Choose an iCloud Drive folder", systemImage: "icloud")
+                        }
+                    }
+                    if let backupStatus { Text(backupStatus).font(.caption).foregroundStyle(Theme.inkMuted) }
+                } header: {
+                    Text("iCloud backup")
+                } footer: {
+                    Text("Pick or create a folder in iCloud Drive (for example iCloud Drive › Shelfmark). Backups are saved there and sync to your other devices; the ten most recent are kept. To restore, use Import a library file and choose a backup.")
                 }
 
                 Section("About") {
@@ -99,6 +173,39 @@ struct SettingsView: View {
             .background(Theme.ground)
             .navigationTitle("Settings")
             .toolbar { EditButton() }
+            .fileExporter(isPresented: $showExporter, document: exportDoc, contentType: .json,
+                          defaultFilename: "Shelfmark Library \(Date().formatted(.iso8601.year().month().day()))") { result in
+                if case .failure(let e) = result { message = "Export failed: \(e.localizedDescription)" }
+            }
+            // One importer serves both jobs (SwiftUI honors only one fileImporter per view).
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: pickingFolder ? [.folder] : [.json]) { result in
+                switch result {
+                case .success(let url) where pickingFolder:
+                    do {
+                        try BackupManager.setFolder(url)
+                        backupStatus = "Backups will be saved to “\(url.lastPathComponent)”."
+                        Task { await backUpNow() }
+                    } catch { backupStatus = "Couldn't use that folder: \(error.localizedDescription)" }
+                case .success(let url):
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    do { pendingImport = try LibraryArchive.decode(Data(contentsOf: url)) }
+                    catch { message = "That file isn't a Shelfmark library." }
+                case .failure(let e):
+                    message = e.localizedDescription
+                }
+            }
+            .confirmationDialog("Import \(pendingImport?.bookCount ?? 0) books in \(pendingImport?.bookcases.count ?? 0) bookcases?",
+                                isPresented: Binding(get: { pendingImport != nil }, set: { if !$0 { pendingImport = nil } }),
+                                titleVisibility: .visible) {
+                Button("Add to my library") { runImport(replacing: false) }
+                Button("Replace my library", role: .destructive) { runImport(replacing: true) }
+            } message: {
+                Text("Adding keeps your current bookcases; clashing bookcase codes get a number added. Replacing deletes the current library first.")
+            }
+            .alert("Shelfmark", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+                Button("OK") { message = nil }
+            } message: { Text(message ?? "") }
             .sheet(item: $editingCase) { bc in BookcaseEditor(bookcase: bc, nextOrder: bookcases.count) { _ in } }
             .sheet(isPresented: $addingCase) { BookcaseEditor(bookcase: nil, nextOrder: bookcases.count) { _ in } }
         }
@@ -110,13 +217,57 @@ struct SettingsView: View {
         let service = CatalogService()
         let pending = books.filter { $0.catalogStatus != .matched && !$0.title.isEmpty }
         for book in pending {
-            let authors = book.authorsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            if let r = await service.lookup(title: book.title, authors: authors) { apply(r, to: book) }
+            let clues = BookClues(title: book.title,
+                                  authors: book.authorsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
+                                  publisher: book.publisher, spineText: book.spineText,
+                                  designNotes: book.graphicNotes, isbn: book.isbn)
+            if let r = await service.lookup(clues, deep: AppSettings.deepCatalogSearch) { apply(r, to: book) }
             else { book.catalogStatus = .notFound }
             recatalogProgress += 1
+            try? context.save()
         }
         recatalogProgress = 0
+    }
+
+    /// Re-measures every spine's color from its shelf photo with the current method.
+    private func recomputeColors() async {
+        recoloring = true
+        defer { recoloring = false }
+        let photos = (try? context.fetch(FetchDescriptor<ShelfPhoto>())) ?? []
+        for photo in photos where !photo.books.isEmpty {
+            let data = photo.imageData
+            let boxes = photo.books.map(\.box)
+            let colors: [String?] = await offMain {
+                guard let ui = UIImage(data: data), let cg = ui.cgImage else { return boxes.map { _ in nil } }
+                return boxes.map { ImageUtils.averageColorHex(cg, normalized: $0) }
+            }
+            for (book, color) in zip(photo.books, colors) { if let color { book.colorHex = color } }
+        }
         try? context.save()
+        message = "Spine colors updated for \(books.count) books."
+    }
+
+    private func backUpNow() async {
+        backingUp = true
+        defer { backingUp = false }
+        do {
+            let name = try await BackupManager.backUp(context: context)
+            backupStatus = "Saved “\(name)”."
+        } catch {
+            backupStatus = "Backup failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func runImport(replacing: Bool) {
+        guard let archive = pendingImport else { return }
+        pendingImport = nil
+        if replacing { router.highlighted = nil }
+        do {
+            try archive.restore(into: context, replacing: replacing)
+            message = "Imported \(archive.bookCount) books."
+        } catch {
+            message = "Import failed: \(error.localizedDescription)"
+        }
     }
 }
 
@@ -190,15 +341,17 @@ struct BookcaseEditor: View {
 
 enum CatalogExport {
     static func csv(_ books: [Book]) -> URL? {
-        let header = ["Address", "Title", "Authors", "LC Call Number", "LC Class", "Publisher", "Year",
-                      "ISBN", "LCCN", "Subjects", "Bookcase", "Room", "Shelf", "Position", "Catalog Status", "Notes"]
+        let header = ["Address", "Title", "Subtitle", "Authors", "Main Entry", "Edition", "Place", "Publisher", "Year",
+                      "LC Call Number", "LC Class", "Call Number Source", "ISBN", "LCCN", "Subjects",
+                      "Bookcase", "Room", "Shelf", "Position", "Catalog Status", "Confirmed", "Notes"]
         func esc(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
         let sorted = books.sorted { LCCallNumber.sortKey($0.lcCallNumber) < LCCallNumber.sortKey($1.lcCallNumber) }
         var lines = [header.map(esc).joined(separator: ",")]
         for b in sorted {
-            lines.append([b.address, b.title, b.authorsText, b.lcCallNumber, b.lcClass, b.publisher, b.year,
+            lines.append([b.address, b.title, b.subtitle, b.authorsText, b.authorHeading, b.edition,
+                          b.publicationPlace, b.publisher, b.year, b.lcCallNumber, b.lcClass, b.callNumberSource,
                           b.isbn, b.lccn, b.subjectsText, b.shelf?.bookcase?.name ?? "", b.shelf?.bookcase?.room ?? "",
-                          "\(b.shelf?.number ?? 0)", "\(b.position)", b.catalogStatusRaw, b.notes]
+                          "\(b.shelf?.number ?? 0)", "\(b.position)", b.catalogStatusRaw, b.verified ? "yes" : "no", b.notes]
                 .map(esc).joined(separator: ","))
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Shelfmark-catalog.csv")

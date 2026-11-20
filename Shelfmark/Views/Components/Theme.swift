@@ -55,34 +55,68 @@ struct AddressBadge: View {
     }
 }
 
-/// A miniature book spine drawn from the colors captured at scan time.
+/// A book spine drawn in the color measured from the photograph, with the title (and,
+/// when there is room, the author's surname) set along the spine, reading top to bottom
+/// as on American and British bindings. Text is truncated to fit.
 struct SpineSwatch: View {
     let colorHex: String
     let accentHex: String
     var title: String = ""
+    var author: String = ""
     var width: CGFloat = 26
     var height: CGFloat = 96
 
     var body: some View {
         let base = Color(hex: colorHex, fallback: Theme.panelRaised)
-        let accent = Color(hex: accentHex, fallback: Color.readable(onHex: colorHex))
-        RoundedRectangle(cornerRadius: 3)
-            .fill(base.gradient)
-            .overlay(alignment: .top) { Rectangle().fill(accent.opacity(0.85)).frame(height: 3).padding(.top, height * 0.12) }
-            .overlay(alignment: .bottom) { Rectangle().fill(accent.opacity(0.85)).frame(height: 3).padding(.bottom, height * 0.12) }
+        let ink = Color.spineInk(colorHex: colorHex, accentHex: accentHex)
+        let fontSize = min(width * 0.5, 13, height * 0.1)
+        RoundedRectangle(cornerRadius: 2)
+            .fill(base)
+            // Gentle rounding of the spine; the color itself stays as measured.
+            .overlay(LinearGradient(colors: [.white.opacity(0.10), .clear, .black.opacity(0.18)],
+                                    startPoint: .leading, endPoint: .trailing))
             .overlay {
-                if !title.isEmpty && width >= 18 {
-                    Text(title)
-                        .font(.system(size: min(width * 0.42, 12), weight: .bold))
-                        .foregroundStyle(accent)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .frame(width: height * 0.7)
-                        .rotationEffect(.degrees(-90))
+                if !title.isEmpty && width >= 9 && fontSize >= 5 {
+                    HStack(spacing: 4) {
+                        Text(title)
+                            .font(.system(size: fontSize, weight: .bold))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 2)
+                        if !author.isEmpty && height >= 70 {
+                            Text(author)
+                                .font(.system(size: fontSize * 0.8, weight: .medium))
+                                .lineLimit(1)
+                                .layoutPriority(-1)
+                        }
+                    }
+                    .foregroundStyle(ink)
+                    .padding(.horizontal, max(height * 0.06, 3))
+                    .frame(width: height, height: width)
+                    .rotationEffect(.degrees(90))
+                    .frame(width: width, height: height)
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 2))
             .frame(width: width, height: height)
             .shadow(color: .black.opacity(0.4), radius: 1, x: 1, y: 0)
+    }
+}
+
+extension Color {
+    /// The lettering color for a spine: the color read from the book when it contrasts
+    /// enough with the spine, otherwise black or white.
+    static func spineInk(colorHex: String, accentHex: String) -> Color {
+        func lum(_ hex: String) -> Double? {
+            guard let ui = UIColor(hex: hex) else { return nil }
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return 0.299 * r + 0.587 * g + 0.114 * b
+        }
+        if let a = lum(accentHex), let b = lum(colorHex), abs(a - b) > 0.35 {
+            return Color(hex: accentHex)
+        }
+        return readable(onHex: colorHex)
     }
 }
 
