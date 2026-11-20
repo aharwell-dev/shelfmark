@@ -31,6 +31,7 @@ enum ClaudeError: LocalizedError {
     case refused(String)
     case truncated
     case badResponse(String)
+    case stream(String)
 
     var errorDescription: String? {
         switch self {
@@ -39,6 +40,7 @@ enum ClaudeError: LocalizedError {
         case .refused(let why): return "The request was declined: \(why)"
         case .truncated: return "The response was cut off. Try a photo of fewer books."
         case .badResponse(let s): return "Unexpected response: \(s.prefix(200))"
+        case .stream(let s): return "Claude reported an error: \(s)"
         }
     }
 }
@@ -106,8 +108,12 @@ struct ClaudeVisionService {
         "additionalProperties": false
     ]
 
-    /// Reads all spines in one image (a tile of a shelf photo).
-    func readSpines(jpeg: Data, ocrHints: [String]) async throws -> [SpineReading] {
+    /// Reads all spines in one image (a tile of a shelf photo), streaming progress as it goes.
+    ///
+    /// `onEvent` is called from a background task for every server event, so the UI can show
+    /// that the request is alive, what Claude is examining, and each title as it is written.
+    func readSpines(jpeg: Data, ocrHints: [String],
+                    onEvent: @escaping @Sendable (SpineStreamEvent) -> Void = { _ in }) async throws -> [SpineReading] {
         guard !apiKey.isEmpty else { throw ClaudeError.missingKey }
 
         var userText = "Identify every book spine in this shelf photo, left to right."
@@ -118,8 +124,11 @@ struct ClaudeVisionService {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 16000,
+            "max_tokens": 32000,
+            "stream": true,
             "system": Self.systemPrompt,
+            // Summarized thinking costs nothing extra and lets the app show what Claude is examining.
+            "thinking": ["type": "adaptive", "display": "summarized"],
             "output_config": [
                 "effort": effort,
                 "format": ["type": "json_schema", "schema": Self.schema]
@@ -139,60 +148,135 @@ struct ClaudeVisionService {
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 300
+        // With streaming this is the longest allowed silence between packets, not the total time.
+        // The server sends keep-alive pings, so a stall this long means the connection is dead.
+        request.timeoutInterval = 90
         request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "accept")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
         request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await sendWithRetry(request)
-        guard let http = response as? HTTPURLResponse else { throw ClaudeError.badResponse("no HTTP response") }
-        guard http.statusCode == 200 else {
-            throw ClaudeError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        onEvent(.uploading(bytes: jpeg.count))
+        let bytes = try await openStream(request, onEvent: onEvent)
+        onEvent(.connected)
+
+        var text = ""
+        var thinking = ""
+        var stopReason: String?
+        var refusalExplanation: String?
+        var lastTitleCount = 0
+        var lastThoughtEmit = Date.distantPast
+
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard let data = payload.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            onEvent(.heartbeat)
+
+            switch event["type"] as? String {
+            case "content_block_delta":
+                let delta = event["delta"] as? [String: Any] ?? [:]
+                switch delta["type"] as? String {
+                case "text_delta":
+                    text += delta["text"] as? String ?? ""
+                    let titles = Self.partialTitles(in: text)
+                    if titles.count != lastTitleCount {
+                        lastTitleCount = titles.count
+                        onEvent(.writing(titles: titles))
+                    }
+                case "thinking_delta":
+                    thinking += delta["thinking"] as? String ?? ""
+                    if Date().timeIntervalSince(lastThoughtEmit) > 0.6, let snippet = Self.latestThought(thinking) {
+                        lastThoughtEmit = Date()
+                        onEvent(.thinking(snippet))
+                    }
+                default: break
+                }
+            case "content_block_start":
+                let block = event["content_block"] as? [String: Any] ?? [:]
+                if block["type"] as? String == "fallback" { onEvent(.fellBack) }
+                if block["type"] as? String == "text" && text.isEmpty { onEvent(.writing(titles: [])) }
+            case "message_delta":
+                let delta = event["delta"] as? [String: Any] ?? [:]
+                if let reason = delta["stop_reason"] as? String { stopReason = reason }
+                if let details = delta["stop_details"] as? [String: Any] {
+                    refusalExplanation = details["explanation"] as? String
+                }
+            case "error":
+                let err = event["error"] as? [String: Any] ?? [:]
+                throw ClaudeError.stream(err["message"] as? String ?? "The stream ended with an error.")
+            default:
+                break
+            }
         }
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ClaudeError.badResponse(String(data: data, encoding: .utf8) ?? "")
-        }
-        let stopReason = json["stop_reason"] as? String
-        if stopReason == "refusal" {
-            let details = (json["stop_details"] as? [String: Any])?["explanation"] as? String
-            throw ClaudeError.refused(details ?? "no explanation")
-        }
+        if stopReason == "refusal" { throw ClaudeError.refused(refusalExplanation ?? "no explanation") }
         if stopReason == "max_tokens" { throw ClaudeError.truncated }
-
-        let blocks = json["content"] as? [[String: Any]] ?? []
-        guard let text = blocks.last(where: { $0["type"] as? String == "text" })?["text"] as? String,
-              let textData = text.data(using: .utf8) else {
-            throw ClaudeError.badResponse("no text block")
+        guard let textData = text.data(using: .utf8), !text.isEmpty else {
+            throw ClaudeError.badResponse("The response contained no results.")
         }
         struct Envelope: Codable { let books: [SpineReading] }
-        return try JSONDecoder().decode(Envelope.self, from: textData).books
+        do {
+            return try JSONDecoder().decode(Envelope.self, from: textData).books
+        } catch {
+            throw ClaudeError.badResponse("Couldn't read the results: \(text.prefix(120))")
+        }
     }
 
-    /// Retries rate limits, overloads and server errors with exponential backoff.
-    private func sendWithRetry(_ request: URLRequest, attempts: Int = 4) async throws -> (Data, URLResponse) {
+    /// Opens the event stream, retrying rate limits and server errors before any data has arrived.
+    private func openStream(_ request: URLRequest, attempts: Int = 3,
+                            onEvent: @Sendable (SpineStreamEvent) -> Void) async throws -> URLSession.AsyncBytes {
         var delay: UInt64 = 2_000_000_000
         for attempt in 1...attempts {
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                if let http = response as? HTTPURLResponse,
-                   [408, 429, 500, 502, 503, 504, 529].contains(http.statusCode), attempt < attempts {
-                    if let ra = http.value(forHTTPHeaderField: "retry-after"), let s = Double(ra) {
-                        try await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000))
-                    } else {
-                        try await Task.sleep(nanoseconds: delay)
-                    }
-                    delay *= 2
-                    continue
-                }
-                return (data, response)
-            } catch let error as URLError where attempt < attempts && error.code != .cancelled {
-                try await Task.sleep(nanoseconds: delay)
-                delay *= 2
-            }
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else { throw ClaudeError.badResponse("no HTTP response") }
+            if http.statusCode == 200 { return bytes }
+
+            var body = ""
+            for try await line in bytes.lines { body += line; if body.count > 2000 { break } }
+            let retryable = [408, 429, 500, 502, 503, 504, 529].contains(http.statusCode)
+            guard retryable, attempt < attempts else { throw ClaudeError.http(http.statusCode, body) }
+
+            var wait = delay
+            if let ra = http.value(forHTTPHeaderField: "retry-after"), let s = Double(ra) { wait = UInt64(s * 1_000_000_000) }
+            onEvent(.retrying(attempt: attempt + 1, of: attempts, reason: http.statusCode == 429 ? "rate limited" : "server busy"))
+            try await Task.sleep(nanoseconds: wait)
+            delay *= 2
         }
         throw ClaudeError.badResponse("retries exhausted")
     }
+
+    /// Titles of every book object completed so far in a partial JSON response.
+    static func partialTitles(in text: String) -> [String] {
+        let range = NSRange(text.startIndex..., in: text)
+        return titleRegex.matches(in: text, range: range).compactMap { m in
+            Range(m.range(at: 1), in: text).map { String(text[$0]).replacingOccurrences(of: "\\\"", with: "\"") }
+        }
+    }
+
+    private static let titleRegex = try! NSRegularExpression(pattern: #""title"\s*:\s*"((?:[^"\\]|\\.)*)""#)
+
+    /// The most recent line of Claude's summarized reasoning, trimmed for display.
+    static func latestThought(_ thinking: String) -> String? {
+        let lines = thinking.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.count > 8 }
+        guard var last = lines.last else { return nil }
+        last = last.replacingOccurrences(of: "**", with: "")
+        return last.count > 140 ? "…" + last.suffix(139) : last
+    }
+}
+
+/// Progress reported while a spine-reading request streams.
+enum SpineStreamEvent: Sendable {
+    case uploading(bytes: Int)
+    case retrying(attempt: Int, of: Int, reason: String)
+    case connected
+    case heartbeat
+    case thinking(String)
+    case writing(titles: [String])
+    case fellBack
 }

@@ -2,10 +2,13 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 import UniformTypeIdentifiers
+import AVFoundation
 
 /// Choose a bookcase and shelf, then capture it by photo or video.
 struct ScanView: View {
     @Environment(\.modelContext) private var context
+    @Environment(ScanQueue.self) private var queue
+    @Environment(Router.self) private var router
     @Query(sort: \Bookcase.sortOrder) private var bookcases: [Bookcase]
 
     @State private var selectedCase: Bookcase?
@@ -14,13 +17,16 @@ struct ScanView: View {
     @State private var showCamera = false
     @State private var showNewCase = false
     @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var pendingScan: PendingScan?
+    @State private var openJob: ScanJob?
     @State private var loadError: String?
+    @State private var cameraDenied = false
+    @State private var toast: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    if !queue.jobs.isEmpty { queueSection }
                     step(1, "Choose a bookcase")
                     caseChips
 
@@ -48,19 +54,35 @@ struct ScanView: View {
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { result in
                     showCamera = false
-                    let next: PendingScan? = switch result {
-                    case .photo(let img): PendingScan(input: .photos([img]))
-                    case .video(let url): PendingScan(input: .video(url))
-                    case nil: nil
+                    switch result {
+                    case .photo(let img): enqueue(.photos([img]))
+                    case .video(let url): enqueue(.video(url))
+                    case nil: break
                     }
-                    // Let the camera finish dismissing before presenting the scan session.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { pendingScan = next }
                 }
                 .ignoresSafeArea()
+                .background(Color.black)
             }
-            .fullScreenCover(item: $pendingScan) { pending in
-                if let shelf = selectedShelf {
-                    ScanSessionView(input: pending.input, shelf: shelf, mode: saveMode) { pendingScan = nil }
+            .sheet(item: $openJob) { job in
+                ScanJobView(job: job)
+            }
+            .alert("Camera access is off", isPresented: $cameraDenied) {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Shelfmark needs the camera to photograph shelves. Turn on Camera for Shelfmark in Settings, or use Library to pick existing photos.")
+            }
+            .overlay(alignment: .top) {
+                if let toast {
+                    Text(toast)
+                        .font(.system(size: 14, weight: .bold))
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                        .background(Theme.signal, in: Capsule())
+                        .foregroundStyle(.black)
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .onChange(of: pickerItems) { _, items in
@@ -136,7 +158,7 @@ struct ScanView: View {
                     .font(.footnote).foregroundStyle(Theme.inkMuted)
             }
             HStack(spacing: 12) {
-                Button { showCamera = true } label: {
+                Button { startCamera() } label: {
                     Label("Camera", systemImage: "camera.fill")
                 }
                 .buttonStyle(SignalButtonStyle())
@@ -165,13 +187,67 @@ struct ScanView: View {
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
     }
 
+    // MARK: Queue
+
+    private var queueSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionLabel(text: queue.activeCount > 0 ? "Processing · \(queue.activeCount)" : "Scans")
+                Spacer()
+                if queue.readyCount > 1 {
+                    Button("Save all \(queue.readyCount)") {
+                        for job in queue.jobs where job.isReady { queue.save(job, context: context, router: router) }
+                    }
+                    .font(.system(size: 13, weight: .bold))
+                }
+            }
+            ForEach(queue.jobs) { job in
+                ScanJobCard(job: job, place: job.isWaiting ? queue.place(of: job) : nil,
+                            open: { openJob = job },
+                            save: { queue.save(job, context: context, router: router) },
+                            retry: { queue.retry(job) },
+                            remove: { queue.remove(job) })
+            }
+        }
+    }
+
+    private func startCamera() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            showCamera = true
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted { showCamera = true } else { cameraDenied = true }
+                }
+            }
+        default:
+            cameraDenied = true
+        }
+    }
+
+    /// Adds the capture to the background queue and moves on to the next shelf,
+    /// so the user can keep photographing without waiting.
+    private func enqueue(_ input: ScanInput) {
+        guard let shelf = selectedShelf else { return }
+        queue.enqueue(shelf: shelf, mode: saveMode, input: input)
+        var message = "Shelf \(shelf.label) added to queue"
+        if let bookcase = shelf.bookcase,
+           let next = bookcase.orderedShelves.first(where: { $0.number == shelf.number + 1 }) {
+            selectedShelf = next
+            message += " · next: \(next.label)"
+        }
+        withAnimation(.snappy) { toast = message }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { withAnimation { toast = nil } }
+    }
+
     private func loadPicked(_ items: [PhotosPickerItem]) async {
         defer { pickerItems = [] }
         // A single video becomes a panorama; otherwise photos are treated as left-to-right sections.
         if let videoItem = items.first(where: { $0.supportedContentTypes.contains { $0.conforms(to: .movie) } }) {
             do {
                 if let movie = try await videoItem.loadTransferable(type: PickedMovie.self) {
-                    pendingScan = PendingScan(input: .video(movie.url))
+                    enqueue(.video(movie.url))
                 }
             } catch { loadError = error.localizedDescription }
             return
@@ -183,13 +259,8 @@ struct ScanView: View {
             }
         }
         if images.isEmpty { loadError = "None of the selected items could be read as photos." }
-        else { pendingScan = PendingScan(input: .photos(images)) }
+        else { enqueue(.photos(images)) }
     }
-}
-
-private struct PendingScan: Identifiable {
-    let id = UUID()
-    let input: ScanInput
 }
 
 /// A bookcase drawn as an elevation; each shelf is tappable.

@@ -43,118 +43,285 @@ enum SaveMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Live state of one section of a shelf photo while Claude reads it.
+struct TileProgress: Identifiable {
+    enum Phase: Equatable { case queued, ocr, uploading, thinking, writing, done, failed }
+
+    let id: Int
+    let segment: Int
+    var phase: Phase = .queued
+    var ocrFragments = 0
+    var titles: [String] = []
+    var thought = ""
+    var note = ""
+    var startedAt: Date?
+    var writingStartedAt: Date?
+    var finishedAt: Date?
+
+    /// Rough completion of this tile, 0–1. Claude's thinking time can't be measured directly,
+    /// so it eases toward the halfway mark; writing advances with each title received.
+    func fraction(at now: Date) -> Double {
+        switch phase {
+        case .queued: return 0
+        case .ocr: return 0.04
+        case .uploading: return 0.08
+        case .thinking:
+            let t = now.timeIntervalSince(startedAt ?? now)
+            return 0.1 + 0.4 * (1 - exp(-t / 45))
+        case .writing: return 0.5 + 0.45 * (1 - exp(-Double(titles.count) / 14))
+        case .done, .failed: return 1
+        }
+    }
+}
+
+struct ActivityLine: Identifiable {
+    let id = UUID()
+    let time: Date
+    let text: String
+}
+
 @MainActor
 @Observable
 final class ScanPipeline {
     enum Stage: Equatable {
-        case idle, stitching, reading, identifying, cataloging, review, failed(String)
+        case idle, preparing, stitching, identifying, cataloging, review, failed(String)
 
         var title: String {
             switch self {
-            case .idle: return "Ready"
+            case .idle: return "Waiting"
+            case .preparing: return "Preparing photo"
             case .stitching: return "Stitching video"
-            case .reading: return "Reading spines"
             case .identifying: return "Identifying books"
             case .cataloging: return "Finding LC records"
-            case .review: return "Review"
-            case .failed: return "Something went wrong"
+            case .review: return "Ready to review"
+            case .failed: return "Scan failed"
             }
+        }
+
+        var isFinished: Bool {
+            switch self { case .review, .failed: return true; default: return false }
         }
     }
 
     var stage: Stage = .idle
-    var progress: Double = 0
     var detail: String = ""
     var segments: [DraftSegment] = []
+    var tiles: [TileProgress] = []
+    var catalogDone = 0
+    var catalogTotal = 0
+    var catalogInFlight: [String] = []
+    var startedAt: Date?
+    var finishedAt: Date?
+    /// Last time anything happened: a stream event, a finished step. Drives the "live" indicator.
+    var lastActivity: Date = .now
+    var activity: [ActivityLine] = []
+    var warnings: [String] = []
 
     private let claude = ClaudeVisionService()
     private let catalog = CatalogService()
 
     var allBooks: [DraftBook] { segments.flatMap(\.books) }
+    var spinesSoFar: Int { tiles.reduce(0) { $0 + $1.titles.count } }
+
+    /// Overall completion, 0–1, weighted roughly by how long each step takes.
+    func progress(at now: Date = .now) -> Double {
+        switch stage {
+        case .idle: return 0
+        case .preparing, .stitching: return 0.04
+        case .identifying:
+            guard !tiles.isEmpty else { return 0.08 }
+            let f = tiles.reduce(0) { $0 + $1.fraction(at: now) } / Double(tiles.count)
+            return 0.08 + 0.7 * f
+        case .cataloging:
+            return 0.78 + 0.22 * (catalogTotal == 0 ? 1 : Double(catalogDone) / Double(catalogTotal))
+        case .review: return 1
+        case .failed: return 0
+        }
+    }
+
+    func elapsed(at now: Date = .now) -> TimeInterval {
+        guard let startedAt else { return 0 }
+        return (finishedAt ?? now).timeIntervalSince(startedAt)
+    }
+
+    private func log(_ text: String) {
+        lastActivity = .now
+        activity.append(ActivityLine(time: .now, text: text))
+        if activity.count > 60 { activity.removeFirst(activity.count - 60) }
+    }
 
     func reset() {
-        stage = .idle; progress = 0; detail = ""; segments = []
+        stage = .idle; detail = ""; segments = []; tiles = []
+        catalogDone = 0; catalogTotal = 0; catalogInFlight = []
+        startedAt = nil; finishedAt = nil; activity = []; warnings = []
     }
 
     func run(_ input: ScanInput) async {
         reset()
+        startedAt = .now
+        lastActivity = .now
         do {
             var images: [(CGImage, Bool)] = []
             switch input {
             case .photos(let photos):
-                images = photos.compactMap { ImageUtils.normalized($0).map { ($0, false) } }
+                stage = .preparing
+                detail = photos.count == 1 ? "Straightening and sizing the photo" : "Preparing \(photos.count) photos"
+                log("Started scan of \(photos.count) photo\(photos.count == 1 ? "" : "s")")
+                images = await offMain { photos.compactMap { ImageUtils.normalized($0).map { ($0, false) } } }
             case .video(let url):
                 stage = .stitching
-                detail = "Aligning frames into a panorama…"
+                detail = "Aligning video frames into one panorama"
+                log("Started stitching video")
                 images = [(try await VideoStitcher.panorama(from: url), true)]
+                log("Panorama ready")
             }
+            try Task.checkCancellation()
 
-            for (index, (image, fromVideo)) in images.enumerated() {
-                let books = try await identify(image, segmentLabel: images.count > 1 ? "Photo \(index + 1) of \(images.count)" : nil)
-                guard let jpeg = ImageUtils.jpegData(ImageUtils.scaled(image, maxEdge: 6000)) else { continue }
-                segments.append(DraftSegment(image: image, jpeg: jpeg, fromVideo: fromVideo, books: books))
+            // Split every photo into sections up front so all of them can be read in parallel.
+            var allTiles: [(segment: Int, image: CGImage, x0: CGFloat, x1: CGFloat)] = []
+            for (s, (image, _)) in images.enumerated() {
+                let parts = await offMain { ImageUtils.horizontalTiles(image) }
+                allTiles += parts.map { (segment: s, image: $0.image, x0: $0.x0, x1: $0.x1) }
             }
+            tiles = allTiles.enumerated().map { TileProgress(id: $0.offset, segment: $0.element.segment) }
+            log("Divided into \(tiles.count) section\(tiles.count == 1 ? "" : "s") for reading")
+
+            stage = .identifying
+            detail = "Sending to Claude"
+            let perSegment = try await identify(allTiles, segmentCount: images.count)
+
+            for (s, (image, fromVideo)) in images.enumerated() {
+                let merged = Self.mergeOverlaps(perSegment[s])
+                let (colored, jpeg) = await offMain { () -> ([DraftBook], Data?) in
+                    var books = merged
+                    for i in books.indices {
+                        books[i].measuredColorHex = ImageUtils.averageColorHex(image, normalized: books[i].box)
+                    }
+                    return (books, ImageUtils.jpegData(ImageUtils.scaled(image, maxEdge: 6000)))
+                }
+                guard let jpeg else { continue }
+                segments.append(DraftSegment(image: image, jpeg: jpeg, fromVideo: fromVideo, books: colored))
+            }
+            log("Found \(allBooks.count) spines")
 
             try await catalogAll()
             stage = .review
+            detail = "\(allBooks.count) books found"
+            finishedAt = .now
+            log("Finished in \(Int(elapsed()))s")
+        } catch is CancellationError {
+            stage = .failed("Cancelled.")
+            finishedAt = .now
         } catch {
             stage = .failed(error.localizedDescription)
+            finishedAt = .now
+            log("Failed: \(error.localizedDescription)")
         }
     }
 
     // MARK: Identification
 
-    private func identify(_ image: CGImage, segmentLabel: String?) async throws -> [DraftBook] {
-        let tiles = ImageUtils.horizontalTiles(image)
-        stage = .reading
-        detail = [segmentLabel, "Reading \(tiles.count) section\(tiles.count == 1 ? "" : "s") of the shelf"]
-            .compactMap { $0 }.joined(separator: " · ")
-        progress = 0
-
-        var found: [DraftBook] = []
-        var completed = 0
+    private func identify(_ allTiles: [(segment: Int, image: CGImage, x0: CGFloat, x1: CGFloat)],
+                          segmentCount: Int) async throws -> [[DraftBook]] {
         let claude = self.claude
+        var results = Array(repeating: [DraftBook](), count: segmentCount)
+        var failures: [String] = []
 
-        try await withThrowingTaskGroup(of: [DraftBook].self) { group in
+        await withTaskGroup(of: (Int, Result<[DraftBook], Error>).self) { group in
             var next = 0
             func addTile(_ i: Int) {
-                let tile = tiles[i]
+                let tile = allTiles[i]
                 group.addTask {
-                    let hints = await SpineOCR.recognize(in: tile.image).map(\.text)
-                    let small = ImageUtils.scaled(tile.image, maxEdge: 2000)
-                    guard let jpeg = ImageUtils.jpegData(small, quality: 0.85) else { return [] }
-                    let readings = try await claude.readSpines(jpeg: jpeg, ocrHints: hints)
-                    let span = tile.x1 - tile.x0
-                    return readings.map { r in
-                        let x0 = tile.x0 + CGFloat(min(r.xStart, r.xEnd).clamped01) * span
-                        let x1 = tile.x0 + CGFloat(max(r.xStart, r.xEnd).clamped01) * span
-                        let y0 = CGFloat(min(r.yTop, r.yBottom).clamped01)
-                        let y1 = CGFloat(max(r.yTop, r.yBottom).clamped01)
-                        return DraftBook(reading: r, box: CGRect(x: x0, y: y0, width: max(x1 - x0, 0.002), height: max(y1 - y0, 0.05)))
+                    do {
+                        await self.update(i) { $0.phase = .ocr; $0.startedAt = .now }
+                        let hints = await SpineOCR.recognize(in: tile.image).map(\.text)
+                        await self.update(i, log: "Section \(i + 1): read \(hints.count) text fragments on device") {
+                            $0.ocrFragments = hints.count; $0.phase = .uploading
+                        }
+                        let small = ImageUtils.scaled(tile.image, maxEdge: 2000)
+                        guard let jpeg = ImageUtils.jpegData(small, quality: 0.85) else { return (i, .success([])) }
+
+                        let readings = try await claude.readSpines(jpeg: jpeg, ocrHints: hints) { event in
+                            Task { @MainActor in self.handle(event, tile: i) }
+                        }
+                        let span = tile.x1 - tile.x0
+                        let books = readings.map { r in
+                            let x0 = tile.x0 + CGFloat(min(r.xStart, r.xEnd).clamped01) * span
+                            let x1 = tile.x0 + CGFloat(max(r.xStart, r.xEnd).clamped01) * span
+                            let y0 = CGFloat(min(r.yTop, r.yBottom).clamped01)
+                            let y1 = CGFloat(max(r.yTop, r.yBottom).clamped01)
+                            return DraftBook(reading: r, box: CGRect(x: x0, y: y0, width: max(x1 - x0, 0.002), height: max(y1 - y0, 0.05)))
+                        }
+                        await self.update(i, log: "Section \(i + 1): \(books.count) spines identified") {
+                            $0.phase = .done; $0.finishedAt = .now; $0.titles = readings.map(\.title)
+                        }
+                        return (i, .success(books))
+                    } catch {
+                        let message = error.localizedDescription
+                        await self.update(i, log: "Section \(i + 1) failed: \(message)") {
+                            $0.phase = .failed; $0.finishedAt = .now; $0.note = message
+                        }
+                        return (i, .failure(error))
                     }
                 }
             }
-            // At most three tiles in flight to stay polite with rate limits.
-            while next < min(3, tiles.count) { addTile(next); next += 1 }
-            await MainActor.run { self.stage = .identifying }
-            for try await batch in group {
-                found.append(contentsOf: batch)
-                completed += 1
-                // The task-group body isn't main-actor isolated, so hop to the main actor for UI state.
-                let fraction = Double(completed) / Double(tiles.count), count = found.count
-                await MainActor.run {
-                    self.progress = fraction
-                    self.detail = "Identified \(count) spines so far"
+            // At most three sections in flight to stay within rate limits.
+            while next < min(3, allTiles.count) { addTile(next); next += 1 }
+            for await (i, result) in group {
+                switch result {
+                case .success(let books): results[allTiles[i].segment].append(contentsOf: books)
+                case .failure(let error): failures.append(error.localizedDescription)
                 }
-                if next < tiles.count { addTile(next); next += 1 }
+                if next < allTiles.count { addTile(next); next += 1 }
             }
         }
 
-        var merged = Self.mergeOverlaps(found)
-        for i in merged.indices {
-            merged[i].measuredColorHex = ImageUtils.averageColorHex(image, normalized: merged[i].box)
+        if failures.count == allTiles.count, let first = failures.first {
+            throw ClaudeError.badResponse(first)
         }
-        return merged
+        if !failures.isEmpty {
+            warnings.append("\(failures.count) of \(allTiles.count) sections couldn't be read. Books in those parts of the shelf may be missing.")
+        }
+        return results
+    }
+
+    private func update(_ tile: Int, log message: String? = nil, _ change: @Sendable (inout TileProgress) -> Void) {
+        guard tiles.indices.contains(tile) else { return }
+        change(&tiles[tile])
+        lastActivity = .now
+        if let message { log(message) }
+    }
+
+    private func handle(_ event: SpineStreamEvent, tile i: Int) {
+        guard tiles.indices.contains(i), tiles[i].phase != .done, tiles[i].phase != .failed else { return }
+        lastActivity = .now
+        switch event {
+        case .uploading(let bytes):
+            tiles[i].phase = .uploading
+            log("Section \(i + 1): sending \(bytes / 1024) KB photo to Claude")
+        case .retrying(let attempt, let total, let reason):
+            tiles[i].note = "Claude is \(reason); retrying (\(attempt)/\(total))"
+            log("Section \(i + 1): \(tiles[i].note)")
+        case .connected:
+            tiles[i].phase = .thinking
+            tiles[i].note = ""
+            log("Section \(i + 1): Claude is examining the spines")
+        case .heartbeat:
+            break
+        case .thinking(let text):
+            if tiles[i].phase == .uploading { tiles[i].phase = .thinking }
+            tiles[i].thought = text
+        case .writing(let titles):
+            if tiles[i].phase != .writing {
+                tiles[i].phase = .writing
+                tiles[i].writingStartedAt = .now
+                log("Section \(i + 1): writing results")
+            }
+            tiles[i].titles = titles
+            detail = "\(spinesSoFar) spines identified so far"
+        case .fellBack:
+            log("Section \(i + 1): switched to a fallback model")
+        }
     }
 
     /// Tiles overlap, so the same spine can be read twice. Keep the better reading.
@@ -185,9 +352,12 @@ final class ScanPipeline {
 
     private func catalogAll() async throws {
         stage = .cataloging
-        progress = 0
         let work = segments.enumerated().flatMap { s, seg in seg.books.indices.map { (s, $0) } }
             .filter { !segments[$0.0].books[$0.1].reading.title.isEmpty }
+        catalogTotal = work.count
+        catalogDone = 0
+        detail = "Looking up \(work.count) books"
+        log("Looking up \(work.count) books in the Library of Congress and Open Library")
         guard !work.isEmpty else { return }
         // Read everything the background tasks need up front, while still on the main actor.
         let jobs: [(segment: Int, book: Int, reading: SpineReading)] =
@@ -195,28 +365,33 @@ final class ScanPipeline {
         let total = jobs.count
         let catalog = self.catalog
 
-        await withTaskGroup(of: (Int, Int, CatalogRecord?).self) { group in
+        await withTaskGroup(of: (Int, Int, String, CatalogRecord?).self) { group in
             var next = 0
-            var done = 0
             func add(_ i: Int) {
                 let job = jobs[i]
                 let r = job.reading
                 group.addTask {
-                    (job.segment, job.book, await catalog.lookup(title: r.title, authors: r.authors, publisherHint: r.publisher))
+                    await MainActor.run { self.catalogInFlight.append(r.title) }
+                    let record = await catalog.lookup(title: r.title, authors: r.authors, publisherHint: r.publisher)
+                    return (job.segment, job.book, r.title, record)
                 }
             }
             while next < min(4, total) { add(next); next += 1 }
-            for await (s, b, record) in group {
-                done += 1
-                let finished = done
+            for await (s, b, title, record) in group {
                 await MainActor.run {
                     self.segments[s].books[b].catalog = record
-                    self.progress = Double(finished) / Double(total)
-                    self.detail = "Cataloged \(finished) of \(total)"
+                    self.catalogDone += 1
+                    if let k = self.catalogInFlight.firstIndex(of: title) { self.catalogInFlight.remove(at: k) }
+                    self.detail = "Cataloged \(self.catalogDone) of \(total)"
+                    self.lastActivity = .now
                 }
+                if Task.isCancelled { group.cancelAll(); break }
                 if next < total { add(next); next += 1 }
             }
         }
+        try Task.checkCancellation()
+        let matched = allBooks.filter { $0.catalog?.lcCallNumber.isEmpty == false }.count
+        log("Found LC call numbers for \(matched) of \(total)")
     }
 
     // MARK: Saving
@@ -271,6 +446,11 @@ func apply(_ c: CatalogRecord, to book: Book) {
     book.subjectsText = c.subjects.joined(separator: " | ")
     book.catalogSource = c.sources.joined(separator: " + ")
     book.catalogStatus = c.isComplete ? .matched : .partial
+}
+
+/// Runs CPU-heavy image work off the main thread so the camera and UI stay responsive.
+func offMain<T>(_ work: @escaping () -> T) async -> T {
+    await Task.detached(priority: .userInitiated) { work() }.value
 }
 
 extension String {

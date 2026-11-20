@@ -56,3 +56,66 @@ struct PickedMovie: Transferable {
         }
     }
 }
+
+/// Presents the system camera directly from UIKit rather than inside a SwiftUI sheet.
+/// Embedding UIImagePickerController in a SwiftUI fullScreenCover can leave the camera
+/// preview black on some devices; presenting it modally from the top view controller avoids that.
+@MainActor
+enum CameraPresenter {
+    private static var activeDelegate: Delegate?
+
+    static func present(onFinish: @escaping (CameraPicker.Result?) -> Void) {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            onFinish(nil)
+            return
+        }
+        guard let presenter = topViewController() else { return }
+
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+        picker.cameraCaptureMode = .photo
+        picker.videoQuality = .typeHigh
+        picker.videoMaximumDuration = 120
+        picker.modalPresentationStyle = .fullScreen
+
+        let delegate = Delegate { result in
+            picker.dismiss(animated: true) {
+                activeDelegate = nil
+                onFinish(result)
+            }
+        }
+        activeDelegate = delegate          // UIImagePickerController holds its delegate weakly
+        picker.delegate = delegate
+        presenter.present(picker, animated: true)
+    }
+
+    private static func topViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive } ??
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        var top = scene?.windows.first(where: \.isKeyWindow)?.rootViewController
+            ?? scene?.windows.first?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        return top
+    }
+
+    private final class Delegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let finish: (CameraPicker.Result?) -> Void
+        init(finish: @escaping (CameraPicker.Result?) -> Void) { self.finish = finish }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let url = info[.mediaURL] as? URL {
+                finish(.video(url))
+            } else if let image = info[.originalImage] as? UIImage {
+                finish(.photo(image))
+            } else {
+                finish(nil)
+            }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { finish(nil) }
+    }
+}

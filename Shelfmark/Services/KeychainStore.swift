@@ -50,7 +50,7 @@ enum AppSettings {
 
     /// Reasoning effort for spine identification: low / medium / high.
     static var effort: String {
-        get { UserDefaults.standard.string(forKey: "claudeEffort") ?? "high" }
+        get { UserDefaults.standard.string(forKey: "claudeEffort") ?? "medium" }
         set { UserDefaults.standard.set(newValue, forKey: "claudeEffort") }
     }
 }

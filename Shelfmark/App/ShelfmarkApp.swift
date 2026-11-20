@@ -4,11 +4,13 @@ import SwiftData
 @main
 struct ShelfmarkApp: App {
     @State private var router = Router()
+    @State private var queue = ScanQueue()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(router)
+                .environment(queue)
                 .preferredColorScheme(.dark)
                 .tint(Theme.signal)
         }
@@ -31,6 +33,7 @@ final class Router {
 
 struct RootView: View {
     @Environment(Router.self) private var router
+    @Environment(ScanQueue.self) private var queue
 
     var body: some View {
         @Bindable var router = router
@@ -41,6 +44,8 @@ struct RootView: View {
             ScanView()
                 .tabItem { Label("Scan", systemImage: "camera.viewfinder") }
                 .tag(Router.Tab.scan)
+                // Badge counts shelves still processing plus those ready to review.
+                .badge(queue.jobs.count)
             FindingAidView()
                 .tabItem { Label("Finder", systemImage: "scope") }
                 .tag(Router.Tab.finder)
