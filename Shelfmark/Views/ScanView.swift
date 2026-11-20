@@ -14,7 +14,6 @@ struct ScanView: View {
     @State private var selectedCase: Bookcase?
     @State private var selectedShelf: Shelf?
     @State private var saveMode: SaveMode = .replace
-    @State private var showCamera = false
     @State private var showNewCase = false
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var openJob: ScanJob?
@@ -50,18 +49,6 @@ struct ScanView: View {
                     selectedCase = created
                     selectedShelf = created.orderedShelves.first
                 }
-            }
-            .fullScreenCover(isPresented: $showCamera) {
-                CameraPicker { result in
-                    showCamera = false
-                    switch result {
-                    case .photo(let img): enqueue(.photos([img]))
-                    case .video(let url): enqueue(.video(url))
-                    case nil: break
-                    }
-                }
-                .ignoresSafeArea()
-                .background(Color.black)
             }
             .sheet(item: $openJob) { job in
                 ScanJobView(job: job)
@@ -211,18 +198,30 @@ struct ScanView: View {
         }
     }
 
-    private func startCamera() {
+    @MainActor private func startCamera() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            showCamera = true
+            presentCamera()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
-                DispatchQueue.main.async {
-                    if granted { showCamera = true } else { cameraDenied = true }
+                Task { @MainActor in
+                    if granted { presentCamera() } else { cameraDenied = true }
                 }
             }
         default:
             cameraDenied = true
+        }
+    }
+
+    /// Opens the system camera from UIKit. Each shot closes the camera completely, so it is
+    /// released for the next capture and for other apps.
+    @MainActor private func presentCamera() {
+        CameraPresenter.present { result in
+            switch result {
+            case .photo(let img): enqueue(.photos([img]))
+            case .video(let url): enqueue(.video(url))
+            case nil: break
+            }
         }
     }
 

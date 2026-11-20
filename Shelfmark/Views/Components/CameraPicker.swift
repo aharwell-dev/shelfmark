@@ -101,6 +101,7 @@ enum CameraPresenter {
         return top
     }
 
+    @MainActor
     private final class Delegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let finish: (CameraPicker.Result?) -> Void
         init(finish: @escaping (CameraPicker.Result?) -> Void) { self.finish = finish }

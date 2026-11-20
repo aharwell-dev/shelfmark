@@ -39,9 +39,7 @@ struct ScanJobView: View {
             }
         }
         .sheet(item: $editing) { target in
-            DraftEditor(book: Binding(
-                get: { job.pipeline.segments[target.segment].books[target.book] },
-                set: { job.pipeline.segments[target.segment].books[target.book] = $0 }))
+            DraftEditor(book: Bindable(job.pipeline).segments[target.segment].books[target.book])
         }
     }
 
