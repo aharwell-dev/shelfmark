@@ -212,8 +212,11 @@ final class Book {
     }
 
     /// A compact title for spine drawings: drops a leading article and any subtitle.
-    var shortTitle: String {
-        var t = title.isEmpty ? "Unidentified" : title
+    var shortTitle: String { Book.abbreviate(title) }
+
+    /// Drops a leading article and any subtitle, for drawing on a spine.
+    static func abbreviate(_ fullTitle: String) -> String {
+        var t = fullTitle.isEmpty ? "Unidentified" : fullTitle
         if let colon = t.firstIndex(where: { $0 == ":" || $0 == ";" }) { t = String(t[..<colon]) }
         for article in ["The ", "A ", "An "] where t.hasPrefix(article) && t.count > article.count + 3 {
             t = String(t.dropFirst(article.count))

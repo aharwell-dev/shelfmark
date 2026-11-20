@@ -257,10 +257,9 @@ private struct ShelfStrip: View {
             let total: CGFloat = CGFloat(max(books.reduce(0.0) { $0 + $1.drawingWidth }, 0.001))
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(Array(books.enumerated()), id: \.element.id) { i, b in
-                    Rectangle()
-                        .fill(Color(hex: b.colorHex, fallback: .gray))
-                        .frame(width: max(geo.size.width * CGFloat(b.drawingWidth) / total, 2),
-                               height: geo.size.height * (i == current ? 1 : 0.75))
+                    SpineSwatch(colorHex: b.colorHex, accentHex: b.accentColorHex, title: b.shortTitle,
+                                width: max(geo.size.width * CGFloat(b.drawingWidth) / total, 2),
+                                height: geo.size.height * (i == current ? 1 : 0.75), minFont: 3)
                         .overlay(alignment: .top) {
                             if b.verified { Circle().fill(.green).frame(width: 4, height: 4).padding(.top, 2) }
                         }

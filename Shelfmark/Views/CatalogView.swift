@@ -270,7 +270,8 @@ struct BookRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            SpineSwatch(colorHex: book.colorHex, accentHex: book.accentColorHex, width: 18, height: 64)
+            SpineSwatch(colorHex: book.colorHex, accentHex: book.accentColorHex, title: book.shortTitle,
+                        width: 18, height: 64, minFont: 3)
             VStack(alignment: .leading, spacing: 4) {
                 Text(book.title.isEmpty ? "Unidentified spine" : book.title)
                     .font(.system(size: 16, weight: .bold))

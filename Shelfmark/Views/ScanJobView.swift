@@ -565,7 +565,9 @@ private struct DraftRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("\(number)").font(Theme.mono(12, weight: .bold)).foregroundStyle(Theme.inkMuted).frame(width: 24)
-            SpineSwatch(colorHex: draft.colorHex, accentHex: draft.reading.accentColor, width: 14, height: 50)
+            SpineSwatch(colorHex: draft.colorHex, accentHex: draft.reading.accentColor,
+                        title: Book.abbreviate(draft.reading.title.isEmpty ? draft.displayTitle : draft.reading.title),
+                        width: 14, height: 50, minFont: 3)
             VStack(alignment: .leading, spacing: 3) {
                 Text(draft.displayTitle).font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(draft.reading.title.isEmpty ? Theme.inkMuted : Theme.ink).lineLimit(2)

@@ -84,7 +84,8 @@ struct FindingAidView: View {
                 ForEach(matches.prefix(25)) { b in
                     Button { select(b) } label: {
                         HStack(spacing: 8) {
-                            SpineSwatch(colorHex: b.colorHex, accentHex: b.accentColorHex, width: 8, height: 34)
+                            SpineSwatch(colorHex: b.colorHex, accentHex: b.accentColorHex, title: b.shortTitle,
+                                        width: 8, height: 34, minFont: 3)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(b.title).font(.caption.weight(.bold)).lineLimit(1)
                                 Text(b.address).font(Theme.mono(10)).foregroundStyle(Theme.signal)
@@ -158,7 +159,8 @@ private struct TargetCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SpineSwatch(colorHex: book.colorHex, accentHex: book.accentColorHex, width: 14, height: 54)
+            SpineSwatch(colorHex: book.colorHex, accentHex: book.accentColorHex, title: book.shortTitle,
+                        width: 14, height: 54, minFont: 3)
             VStack(alignment: .leading, spacing: 4) {
                 Text(book.title.isEmpty ? "Unidentified spine" : book.title).font(.headline).lineLimit(1)
                 Text(book.addressDescription).font(.caption).foregroundStyle(Theme.inkMuted).lineLimit(2)
