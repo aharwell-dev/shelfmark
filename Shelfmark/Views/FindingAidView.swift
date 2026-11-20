@@ -294,8 +294,8 @@ struct BookcaseElevation: View {
         let othersDim = target != nil && !isTarget
 
         return SpineSwatch(colorHex: book.colorHex, accentHex: book.accentColorHex,
-                           title: zoom > 1.3 ? book.shortTitle : "", author: zoom > 1.8 ? book.authorSurname : "",
-                           width: w, height: h)
+                           title: book.shortTitle, author: zoom > 1.8 ? book.authorSurname : "",
+                           width: w, height: h, minFont: 3)
             .saturation(othersDim ? 0.15 : 1)
             .opacity(othersDim ? 0.45 : 1)
             .overlay { if isTarget { PulseRing() } }

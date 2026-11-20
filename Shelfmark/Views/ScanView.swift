@@ -376,11 +376,10 @@ struct MiniShelf: View {
             let scale = min(geo.size.width / total, 30 / (books.map(\.drawingWidth).max() ?? 1))
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(books) { b in
-                    Rectangle()
-                        .fill(Color(hex: b.colorHex, fallback: .gray))
-                        .frame(width: max(b.drawingWidth * scale, 1.5),
-                               height: geo.size.height * CGFloat(0.72 + 0.28 * min(1, (b.boxY1 - b.boxY0) / 0.8)))
-                        .overlay(alignment: .trailing) { Rectangle().fill(.black.opacity(0.3)).frame(width: 0.5) }
+                    SpineSwatch(colorHex: b.colorHex, accentHex: b.accentColorHex, title: b.shortTitle,
+                                width: max(CGFloat(b.drawingWidth) * scale, 1.5),
+                                height: geo.size.height * CGFloat(0.72 + 0.28 * min(1, (b.boxY1 - b.boxY0) / 0.8)),
+                                minFont: 3)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)

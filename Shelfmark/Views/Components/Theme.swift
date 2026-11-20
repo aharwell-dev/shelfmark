@@ -65,25 +65,30 @@ struct SpineSwatch: View {
     var author: String = ""
     var width: CGFloat = 26
     var height: CGFloat = 96
+    /// Smallest type size to draw. Overview drawings pass a small value so every spine keeps
+    /// its title even when tiny; the default hides text that would be too small to read.
+    var minFont: CGFloat = 5
 
     var body: some View {
         let base = Color(hex: colorHex, fallback: Theme.panelRaised)
         let ink = Color.spineInk(colorHex: colorHex, accentHex: accentHex)
-        let fontSize = min(width * 0.5, 13, height * 0.1)
+        let natural = min(width * 0.5, 13, height * 0.1)
+        let fontSize = natural >= minFont ? natural : min(minFont, width * 0.9)
+        let showTitle = !title.isEmpty && fontSize >= 2.5 && (minFont < 5 || (width >= 9 && natural >= 5))
         RoundedRectangle(cornerRadius: 2)
             .fill(base)
             // Gentle rounding of the spine; the color itself stays as measured.
             .overlay(LinearGradient(colors: [.white.opacity(0.10), .clear, .black.opacity(0.18)],
                                     startPoint: .leading, endPoint: .trailing))
             .overlay {
-                if !title.isEmpty && width >= 9 && fontSize >= 5 {
+                if showTitle {
                     HStack(spacing: 4) {
                         Text(title)
                             .font(.system(size: fontSize, weight: .bold))
                             .lineLimit(1)
                             .truncationMode(.tail)
                         Spacer(minLength: 2)
-                        if !author.isEmpty && height >= 70 {
+                        if !author.isEmpty && height >= 70 && natural >= 5 {
                             Text(author)
                                 .font(.system(size: fontSize * 0.8, weight: .medium))
                                 .lineLimit(1)
