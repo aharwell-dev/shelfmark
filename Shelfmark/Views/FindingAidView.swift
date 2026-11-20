@@ -6,21 +6,22 @@ import SwiftData
 /// the book in the actual shelf photograph.
 struct FindingAidView: View {
     @Environment(Router.self) private var router
+    @Environment(\.modelContext) private var context
     @Query(sort: \Bookcase.sortOrder) private var bookcases: [Bookcase]
     @Query private var books: [Book]
 
     @State private var mode: Mode = .plan
     @State private var query = ""
     @State private var zoom: CGFloat = 1
-    @GestureState private var pinch: CGFloat = 1
     @State private var inspected: Book?
+    @State private var focusToken = 0
 
     enum Mode: String, CaseIterable, Identifiable { case plan = "Plan", photo = "Photo"; var id: String { rawValue } }
 
     private var target: Book? { router.highlighted }
     private let minZoom: CGFloat = 0.3
     private let maxZoom: CGFloat = 6
-    private var effectiveZoom: CGFloat { clampZoom(zoom * pinch) }
+    private var effectiveZoom: CGFloat { clampZoom(zoom) }
     private func clampZoom(_ z: CGFloat) -> CGFloat { min(max(z, minZoom), maxZoom) }
 
     private var matches: [Book] {
@@ -116,33 +117,34 @@ struct FindingAidView: View {
 
     private var planView: some View {
         GeometryReader { geo in
-            ScrollViewReader { proxy in
-                ScrollView([.horizontal, .vertical], showsIndicators: false) {
-                    HStack(alignment: .bottom, spacing: 26 * effectiveZoom) {
-                        ForEach(bookcases) { bc in
-                            BookcaseElevation(bookcase: bc, target: target, zoom: effectiveZoom) { inspected = $0 }
-                                .id(bc.persistentModelID)
-                        }
+            ZoomableScrollView(zoom: $zoom, minZoom: minZoom, maxZoom: maxZoom,
+                               focusX: targetCaseCenterX, focusToken: focusToken) { z in
+                HStack(alignment: .bottom, spacing: 26 * z) {
+                    ForEach(bookcases) { bc in
+                        BookcaseElevation(bookcase: bc, target: target, zoom: z) { inspected = $0 }
                     }
-                    .padding(.horizontal, 30)
-                    .padding(.top, 70)       // room for the location flag above the top shelf
-                    .padding(.bottom, 30)
                 }
-                // Simultaneous, so a two-finger pinch zooms while one finger still scrolls.
-                .simultaneousGesture(
-                    MagnifyGesture()
-                        .updating($pinch) { v, state, _ in state = v.magnification }
-                        .onEnded { v in
-                            zoom = clampZoom(zoom * v.magnification)
-                            scrollToTarget(proxy)
-                        })
-                .overlay(alignment: .bottomTrailing) {
-                    zoomControls(fit: fitZoom(width: geo.size.width), proxy: proxy)
-                }
-                .onAppear { scrollToTarget(proxy) }
-                .onChange(of: router.highlighted) { _, _ in scrollToTarget(proxy) }
+                .padding(.horizontal, 30)
+                .padding(.top, 70)       // room for the location flag above the top shelf
+                .padding(.bottom, 30)
+                // The canvas is hosted in UIKit, so pass along what its views read from the environment.
+                .environment(router)
+                .modelContext(context)
+                .tint(Theme.signal)
             }
+            .overlay(alignment: .bottomTrailing) {
+                zoomControls(fit: fitZoom(width: geo.size.width))
+            }
+            .onAppear { focusToken += 1 }
+            .onChange(of: router.highlighted) { _, _ in focusToken += 1 }
         }
+    }
+
+    /// Horizontal center of the bookcase holding the highlighted book, at the current zoom.
+    private var targetCaseCenterX: CGFloat? {
+        guard let bc = target?.shelf?.bookcase, let i = bookcases.firstIndex(of: bc) else { return nil }
+        let z = effectiveZoom
+        return 30 + CGFloat(i) * (296 + 26) * z + 148 * z
     }
 
     /// The zoom at which every bookcase fits across the screen.
@@ -152,22 +154,17 @@ struct FindingAidView: View {
         return clampZoom((width - 60) / natural)
     }
 
-    private func scrollToTarget(_ proxy: ScrollViewProxy) {
-        guard let bc = target?.shelf?.bookcase else { return }
-        withAnimation(.easeInOut(duration: 0.6)) { proxy.scrollTo(bc.persistentModelID, anchor: .center) }
-    }
-
-    private func zoomControls(fit: CGFloat, proxy: ScrollViewProxy) -> some View {
+    private func zoomControls(fit: CGFloat) -> some View {
         VStack(spacing: 0) {
-            Button { withAnimation(.snappy) { zoom = clampZoom(zoom * 1.4) }; scrollToTarget(proxy) } label: {
+            Button { zoom = clampZoom(zoom * 1.4) } label: {
                 Image(systemName: "plus").frame(width: 44, height: 40)
             }
             Divider().frame(width: 44)
-            Button { withAnimation(.snappy) { zoom = clampZoom(zoom / 1.4) }; scrollToTarget(proxy) } label: {
+            Button { zoom = clampZoom(zoom / 1.4) } label: {
                 Image(systemName: "minus").frame(width: 44, height: 40)
             }
             Divider().frame(width: 44)
-            Button { withAnimation(.snappy) { zoom = fit } } label: {
+            Button { zoom = fit; focusToken += 1 } label: {
                 Image(systemName: "arrow.down.right.and.arrow.up.left").frame(width: 44, height: 40)
             }
             .accessibilityLabel("Fit all bookcases")

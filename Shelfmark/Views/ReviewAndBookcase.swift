@@ -282,20 +282,18 @@ struct BookcaseFullView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Router.self) private var router
     @State private var zoom: CGFloat = 1
-    @GestureState private var pinch: CGFloat = 1
     @State private var inspected: Book?
     @State private var editingContents: Shelf?
 
-    private var z: CGFloat { min(max(zoom * pinch, 1), 6) }
+    private var z: CGFloat { min(max(zoom, 1), 6) }
 
     var body: some View {
         NavigationStack {
             GeometryReader { geo in
-                let caseWidth = (geo.size.width - 60) * z
-                ScrollView([.horizontal, .vertical]) {
+                ZoomableScrollView(zoom: $zoom, minZoom: 1, maxZoom: 6) { _ in
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(bookcase.orderedShelves) { shelf in
-                            shelfRow(shelf, width: caseWidth)
+                            shelfRow(shelf, width: (geo.size.width - 60) * z)
                         }
                     }
                     .padding(10)
@@ -304,10 +302,10 @@ struct BookcaseFullView: View {
                     .padding(.leading, 34)
                     .padding(.trailing, 16)
                     .padding(.vertical, 20)
+                    // The canvas is hosted in UIKit, so pass along what its views read from the environment.
+                    .environment(router)
+                    .tint(Theme.signal)
                 }
-                // Simultaneous, so a two-finger pinch zooms while one finger still scrolls.
-                .simultaneousGesture(MagnifyGesture().updating($pinch) { v, state, _ in state = v.magnification }
-                    .onEnded { v in zoom = min(max(zoom * v.magnification, 1), 6) })
             }
             .background(Theme.ground)
             .navigationTitle("\(bookcase.code) · \(bookcase.name)")
@@ -315,14 +313,14 @@ struct BookcaseFullView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
                 ToolbarItemGroup(placement: .bottomBar) {
-                    Button { withAnimation { zoom = max(zoom / 1.4, 1) } } label: { Image(systemName: "minus.magnifyingglass") }
+                    Button { zoom = max(zoom / 1.4, 1) } label: { Image(systemName: "minus.magnifyingglass") }
                     Spacer()
-                    Button { withAnimation { zoom = 1 } } label: {
+                    Button { zoom = 1 } label: {
                         Text("\(bookcase.bookCount) books · \(Int((z * 100).rounded()))%")
                             .font(Theme.mono(12)).foregroundStyle(Theme.inkMuted)
                     }
                     Spacer()
-                    Button { withAnimation { zoom = min(zoom * 1.4, 6) } } label: { Image(systemName: "plus.magnifyingglass") }
+                    Button { zoom = min(zoom * 1.4, 6) } label: { Image(systemName: "plus.magnifyingglass") }
                 }
             }
             .sheet(item: $inspected) { book in
